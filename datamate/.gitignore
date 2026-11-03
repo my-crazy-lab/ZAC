@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+cache/
+models/
+survey/
+data_cache/
+*.duckdb
+.DS_Store

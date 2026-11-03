@@ -28,7 +28,7 @@ PA là +1 đúng, 0 abstain, −1 sai, nên mỗi quyết định thiết kế p
 
 **Quy ước cho mọi file (LLM implementer bắt buộc tuân thủ):**
 
-- Không network, không gọi API ngoài.
+- **Dùng API LLM được cấp** (OpenAI-compatible, `Qwen3-4B`), không tự host model. `base_url`/`api_key`/`model` đọc từ `config.py` hoặc biến môi trường — **không** hard-code, **không** commit key. API vẫn gọi được ở vòng private (Docker của đội).
 - Không có `if business_id == ...` hay logic theo id câu hỏi.
 - Cache theo `sha256` của nội dung file dữ liệu, không theo tên business.
 - Mọi sinh LLM dùng temperature 0 và seed cố định.
@@ -152,14 +152,14 @@ Quy tắc (theo rulebook §9 — đã biết, không còn là ẩn số; phần 
 
 - `number`: so khớp theo **luật chấm thật** (rulebook §9), không theo dung sai lỏng: tiền → số nguyên VND, làm tròn về đồng, nửa đồng làm tròn lên; số khác → 2 chữ số thập phân; đúng khi hai bên bằng nhau sau khi làm tròn (`abs(a-b) <= 1e-9`). Dung sai lỏng (`0.5` tuyệt đối / `1e-4` tương đối) chỉ dùng để **log chẩn đoán** trong `dev/evaluate.py`, KHÔNG dùng để tính PA — nếu không ta tinh chỉnh trên metric lạc quan hơn chấm điểm thật.
 - `percent`: rulebook §9 nói "khớp tuyệt đối" và "đúng 2 chữ số thập phân" → đúng khi bằng nhau sau khi làm tròn 2 chữ số thập phân (`abs(a-b) <= 1e-9`). Sai số tuyệt đối 0.01 chỉ để log.
-- `string`: `unaccent(lower(strip(x)))` bằng chuẩn hoá của đáp án chính hoặc của một phần tử trong `alias`.
+- `string`: chuẩn hoá = bỏ khoảng trắng thừa + hạ chữ thường + bỏ dấu câu, **giữ nguyên dấu tiếng Việt** (rulebook §9: "Ngoài các cách viết đó, dấu tiếng Việt phải đúng"; ví dụ sai ghi rõ `"Sting dầu 330ml"` là sai). Chỉ chấp nhận khác dấu khi khớp được một phần tử trong `alias` (alias là các cách viết khác *có thật trong file* của shop).
 - `date`: bằng ISO; câu hỏi theo tháng dùng `YYYY-MM` → so cả hai dạng (so sánh `YYYY-MM` với `YYYY-MM-01` cùng tháng là khớp).
 - `boolean`: bằng.
 - `list`: so khớp có thứ tự từng phần tử như `string`. Cùng độ dài.
 - `table`: cùng số cột, cùng số dòng, so từng ô (số theo `number`, chuỗi theo `string`), bỏ qua tên cột.
 - **Alias:** `answers.jsonl` có trường `alias` là **mảng alias theo từng phần tử** (vd `[["KH0098"],["KH0078","Từ Hải Thanh 0359470831"]]`). Với `list`/`table`, phần tử `i` được coi là khớp nếu khớp giá trị `answer[i]` **hoặc** bất kỳ phần tử nào của `alias[i]`. Với `string`, `alias` là mảng các cách viết thay thế (mã, tên kèm số điện thoại). `alias` rỗng (`[]`) là hợp lệ, không phải lỗi.
 - ref `answer is None` thì chỉ đúng khi `pred.type == "unanswerable"`. `abstain` luôn cho 0 điểm.
-- `canon_key`: số làm tròn 6 chữ số có nghĩa, chuỗi bỏ dấu và lower, list thành tuple, table thành tuple của tuple.
+- `canon_key`: số làm tròn 6 chữ số có nghĩa, chuỗi bỏ khoảng trắng + hạ chữ thường (**giữ dấu**), list thành tuple, table thành tuple của tuple.
 
 **`dev/evaluate.py`:** đọc `submission.jsonl` và `answers.jsonl`, in PA tổng, PA theo `type`, theo business, tỉ lệ coverage (không abstain) và precision.
 
@@ -392,6 +392,10 @@ Tạo (hoặc thay) các view TEMP với **tên cột canonical cố định**. 
 - `v_lots`, `v_returns`, `v_expenses`, `v_inventory` tương tự (chỉ tạo nếu có capability).
 - **Công nợ:** ưu tiên suy từ `v_orders` + `v_payments` (`order_debt_total` − Σ thanh toán ≤ ngày X), **không** dựa vào bảng `debts` khi shop ghi công nợ ở đơn (rulebook §4). Loại đơn COD và đơn bán qua sàn TMĐT khỏi công nợ (rulebook §4) → cần cờ `is_cod`/`is_marketplace` từ `order_pay_method`/`order_channel`.
 - `v_stock(product_code, qty_on_hand)`: từ snapshot nếu có (snapshot gần nhất ≤ as_of), ngược lại `Σ lot_qty (lot_date ≤ as_of) − Σ qty bán hợp lệ`.
+- **Bộ view riêng cho 3 ngành mới ở public_test** (quyết định đã chốt: làm cả 3). Dữ liệu của chúng **không** theo mô hình đơn/dòng/sản phẩm, nên cần view riêng. Phát hiện theo **dấu hiệu cấu trúc** (số cột, tên cột), **không** theo `business_id`:
+  - *Sửa xe* → `v_repair_tickets(ticket_date, vehicle_line, plate, works_text, works, mechanic, amount, is_warranty)`: mỗi dòng = 1 lượt xe; `works` tách theo dấu phẩy + mẫu số thứ tự (`1)`, `2)`); phiếu bảo hành = ghi chú bảo hành **hoặc** tiền = 0.
+  - *Điện thoại* → `v_phone_orders(order_id, order_date, customer, phone, device, amount, trade_in_amount, paid, note)` + `v_installments(order_id, due_date, period_amount, paid_amount, is_overdue)` + `v_warranty_tickets(receive_date, customer, device, imei, issue)` + `v_trade_ins(trade_date, customer, device, price, ref_order_id)`.
+  - *Mẹ và bé* → dùng chung `v_lines`, bổ sung `size`/`product_no` từ danh mục và `customer_since` (ngày đăng ký) để phục vụ câu "khách thành viên mới trong tháng" và "số / size".
 
 **Nghiệm thu:** với business train, `SELECT SUM(line_amount_net) FROM v_lines WHERE ...` khớp đáp án tham chiếu cho ít nhất các câu doanh thu đơn giản (kiểm bằng M8). Test với bảng giả có thêm trạng thái "Đã hủy" và đơn có hàng trả, chắc chắn bị loại. Test `v_lines` không chứa đơn sau as_of.
 
@@ -423,9 +427,14 @@ METRICS = {
  "debt":     ...,  # SUM(order_debt_total − Σ thanh toán ≤ ngày X) theo khách, > 0, loại COD/TMĐT (rulebook §4)
  "debt_age": ...,  # tuổi nợ = as_of − order_date; đơn đặt hôm nay có tuổi nợ 0 (rulebook §4)
  "expiring": ...,  # lot còn tồn, expiry_date ∈ [as_of, as_of+N]
+ # metric cho 3 ngành mới (view riêng ở M4):
+ "repair_tickets": ...,  # COUNT/SUM(v_repair_tickets) theo thợ, theo việc, theo biển số; bỏ phiếu bảo hành
+ "installments": ...,  # SUM phần góp còn nợ trong kỳ, và số kỳ quá hạn (hạn góp < ngày hỏi)
+ "members_new": ...,  # COUNT khách có customer_since trong tháng (kể cả chưa mua)
+ "size_breakdown": ...,  # số lượng theo Số/Size của một mặt hàng (lấy theo cột danh mục, không đoán theo tên)
 }
-def compile_spec(spec:Spec, ctx:BizContext, knobs:Knobs) -> str   # trả SQL
 ```
+
 
 `compile_spec` sinh SQL theo khung:
 
@@ -554,12 +563,13 @@ class LLM:
                  thinking:bool=False) -> list[str]
 ```
 
-Dùng **`transformers` + model cục bộ**, **không dùng vLLM**: máy đích là macOS/Apple Silicon, không có CUDA nên vLLM không chạy được; bài `lifemate` cùng giải đã dùng `transformers` + `Qwen3-4B`, greedy, không mạng lúc inference → bám đúng pattern đó để hai bài đóng gói Docker giống nhau.
+Dùng **API LLM OpenAI-compatible** (`Qwen3-4B`), không tự host model:
 
-- Tên model, `dtype`, `max_len` đọc từ `config.py` (không hard-code). Model tải về cache local lúc **setup**; lúc **inference không gọi mạng** (vòng private BTC chạy Docker của đội → model phải nằm trong image).
-- `json_schema` không có decoder hạn chế kiểu vLLM → ép JSON bằng **prompt + parse + validate theo schema**, hỏi lại tối đa 1 lần; vẫn sai thì coi như mẫu hỏng (không làm hỏng cả lô).
-- Batch: gom prompt của một tầng thành batch `generate` (padding trái, `batch_size` trong config). Nếu RAM không đủ thì chia batch nhỏ hơn — **không** đổi thứ tự kết quả (mọi thứ phải sorted trước, mục 0).
-- `thinking=True` → bật `enable_thinking` trong `apply_chat_template` (nếu model hỗ trợ), dùng cho bước khó (map cột chưa chắc, leo thang).
+- `base_url`, `api_key`, `model` đọc từ `config.py` / biến môi trường — **không** hard-code, **không** commit key. API dùng được cả ở vòng private (Docker của đội).
+- Ép JSON bằng `response_format={"type":"json_schema","json_schema":{...}}`; endpoint từ chối → fallback `{"type":"json_object"}` → cuối cùng là prompt + parse + validate, hỏi lại tối đa 1 lần; vẫn sai thì coi như mẫu hỏng (không làm hỏng cả lô).
+- **Song song 16 luồng** (không giới hạn RPM): `asyncio` + `httpx`, retry theo backoff khi gặp 429/5xx. Mọi lời gọi phải trả kết quả **đúng thứ tự input** → gom theo index, không dựa vào thứ tự hoàn thành.
+- `temperature=0`, `seed` cố định (nếu endpoint hỗ trợ) để tái lập được.
+- `thinking=True` → dùng tham số reasoning của endpoint nếu model hỗ trợ, cho bước khó (map cột chưa chắc, leo thang).
 
 **`llm/schemas.py`:** `SPEC_SCHEMA` (JSON schema với `enum` cho `intent, metric, agg, subject, order, output`), `SQL_SCHEMA = {"answer_type": enum, "sql": string}`, `MCQ_SCHEMA = {"choice": integer}`.
 
@@ -579,7 +589,7 @@ def run_path1(q:Question, ctx:BizContext, knobs:Knobs, windows, entities, bank, 
 
 **Câu dễ (tiết kiệm):** nếu kNN intent (nhãn bank của top-1 BM25) trùng với intent LLM mẫu đầu và mọi entity có điểm ≥ 0.95 thì chỉ sinh 1 mẫu và đặt `k=1`. Mặc định ban đầu là luôn chạy k=3, sau này mới bật tối ưu.
 
-**Nghiệm thu:** trên validation chia theo business (giữ riêng 20% business, không lấy bank từ business đó), `spec_correct_rate = tỉ lệ câu mà candidate vote cao nhất đúng`. Ghi lại theo intent. Đây là số đo chính cho đường 1.
+**Nghiệm thu:** trên validation chia theo business — holdout cố định **6/30 business** (theo seed, trong `config.py`), không lấy bank từ business đó; `spec_correct_rate = tỉ lệ câu mà candidate vote cao nhất đúng`. Ghi lại theo intent. Đây là số đo chính cho đường 1.
 
 ---
 
@@ -688,7 +698,7 @@ main():
 - **Tầng 2:** câu cần leo thang chạy `escalate` rồi `decide` lại.
 - **Ghi nguyên tử:** `write(tmp); os.replace(tmp, cfg.out_path)` sau mỗi lô, với `cfg.out_path` mặc định `public_test/submission.jsonl` (đúng nơi BTC chấm, theo mẫu lifemate) và `cfg.log_dir` mặc định `public_test/logs/`.
 - **Đồng hồ an toàn:** `cfg.deadline_s = 5.25*3600` tính từ đầu `main()`. Nếu quá thì dừng Tầng 2, ghi file, thoát (câu chưa xử lý giữ `abstain`). Quyết định trả lời **không** phụ thuộc đồng hồ.
-- **Ngân sách LLM:** 1000 câu × (k₁ + k₂) prompt là con số lớn; phải đo throughput thật (prompt/giây) ngay từ đầu M9 và chốt `k₁, k₂` theo deadline. Nếu không kham nổi → giảm `k` theo M14 (chạy đường 2 chỉ cho `intent=other`) trước khi cắt bớt câu; không được để deadline cắt ngang giữa lô mà mất file.
+- **Ngân sách LLM:** 1000 câu × (k₁ + k₂) lời gọi API là con số lớn. Chạy **16 luồng song song** (không giới hạn RPM), có backoff khi 429. `cfg.deadline_s` mặc định **5,25·3600** (đổi được trong `config.py`): khi còn dưới 25% thời gian thì bỏ Tầng 2, dưới 50% thì giảm `k₂` (đường 2) — để luôn kịp ghi file. Không được để deadline cắt ngang giữa lô mà mất file.
 - **Log:** `{cfg.log_dir}/<id>.json` gồm `id, answer, elapsed_s, windows, entities, spec_samples, sqls, exec_results, knobs_used, schema_conf, features, p, p_adj, reason`. Ghi thêm `{cfg.log_dir}/_biz_<hash>.json` cho mỗi business (mapping, invariants, capabilities) và `_knobs.json`.
 - **Tái lập:** mọi `generate` greedy, seed cố định, sort đầu vào. Viết `dev/repro_check.py` chạy hai lần liên tiếp trên 300 câu validation, in số câu đổi đáp án và `|ΔPA|`. Mục tiêu ΔPA < 0.01. Nếu chênh nhiều, kiểm tra các câu có `|p_adj − 0.5| < 0.05` (nguồn nondeterminism chính) và nâng margin cho nhóm đó.
 
@@ -726,6 +736,6 @@ M0 ─► M1 ─► M2 ─┐
 | Cách tính giá vốn chính xác | M8 | Tách 2 khái niệm: lãi gộp dùng giá vốn dòng bán; còn lại thử cả hai biến thể bình quân theo lô |
 | Ngưỡng "sắp hết hạn", "bán chậm", "tồn nhiều" | M5, M8 | 30 ngày, phân vị 25%/75% |
 | Tỉ lệ và nguyên nhân câu `null` | M11 `null_causes.py` | Chỉ thiếu capability, ngoài phạm vi, tương lai |
-| Model LLM chạy được trên máy đích | M9 `llm/client.py` | `transformers` + model 4B cục bộ, greedy, không mạng lúc inference. **Chốt sớm**: có được dùng API có sẵn không, và model nào đủ sức |
+| Model LLM chạy được trên máy đích | M9 `llm/client.py` | **Đã chốt**: API OpenAI-compatible `Qwen3-4B`, `base_url`/`api_key`/`model` trong `config.py` + env, 16 luồng song song, `response_format=json_schema`. Còn lại: cần endpoint/key thật và mức phí/giới hạn thực tế |
 | View/metric cho 3 ngành mới (sửa xe, điện thoại, mẹ và bé) | M3, M4, M5 | Train không có → thiết kế mới theo rulebook; phủ 170/1000 câu public test |
 | Nguồn quy đổi đơn vị ở từng shop | M4 `v_units` | Cột quy đổi sẵn > bảng quy đổi > README; thiếu hết thì `qty_base = qty` |

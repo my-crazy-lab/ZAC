@@ -1,168 +1,86 @@
-# Câu hỏi cần trả lời trước khi implement LifeMate
+# Câu hỏi đã trả lời — quyết định trước khi implement LifeMate
 
-> Trả lời ngay dưới mỗi câu (viết `Trả lời:` hoặc xoá dòng default). Bỏ trống = chấp nhận default.
-> Bối cảnh máy hiện tại: **Apple M5, 24 GB RAM, không GPU NVIDIA** (chạy MPS), internet OK, HF cache trống.
-
----
-
-## A. CHẶN — không có thì phải đoán, có thể chọn sai hướng
-
-### A1. Công thức chấm thật của BTC là gì?
-
-Gói dữ liệu chỉ nói: *"BTC chấm bằng cách replay `tool_calls` trong file nộp trên `state.json` ban đầu bằng đúng gói này, rồi so state với đáp án và tính F1 trên call"* (`train+public_test/<split>/zaic_tools/README.md:3`). Cần biết:
-
-- [ ] F1 khớp theo `(name, arguments)` **hay chỉ `name`**?
-      (gold có `contacts.search {"query":"Lan"}` — nếu khớp chặt thì phần đọc gần như không ăn điểm)
-- [ ] **State có được tính điểm không**, hay chỉ để kiểm tra?
-- [ ] Trọng số giữa F1-call và state?
-- [ ] Có bằng / mốc chấm khác không (ví dụ chỉ tính trên các app có thay đổi state)?
-
-**Default nếu không trả lời:** coi như mô tả trên; đo **cả hai** trong `eval/metrics.py`; ưu tiên F1-call.
-
-**Kênh liên hệ BTC:** có (email/nhóm/đầu mối) / không
-
-> Trả lời:
+> **Trạng thái:** đã chốt 2026-11-03. Mục đích: ghi lại lựa chọn để implement không hỏi lại, và để các bước sau (M4+) biết phải đo gì.
+> Bối cảnh máy: **Apple M5, 24 GB RAM, không GPU NVIDIA** (chạy MPS), internet OK, HF cache trống.
 
 ---
 
-### A2. Lượt nộp cuối là `public_test` hay `private_test` (Docker)?
+## A. CHẶN
 
-- [ ] Lượt nộp đang chạy là `public_test` (634 mẫu, có audio sẵn)
-- [ ] Phải sẵn sàng cho `private_test` (docker, **không có audio** → phải chạy ASR trong container)
+### A1. Công thức chấm của BTC
+**Trả lời:** *Đo cả hai, ưu tiên F1-call.*
+→ `eval/metrics.py` xuất **F1-call** (khớp theo `(name, arguments)` **và** biến thể chỉ khớp `name`) + tỉ lệ khớp `state_hash` + khớp state từng app. Mọi knob liên quan read/prefetch để ablation (mục 1.1 của `Planning.md`).
 
-Nếu là private/docker cần biết thêm:
-- [ ] RAM / CPU / thời gian limit của container?
-- [ ] Base image được phép (vd `python:3.12-slim`)? Có GPU không?
-- [ ] Model được bundle trong image hay tải lúc chạy? (plan nói "không dùng mạng khi inference")
+### A2. Lượt nộp (public vs private/docker)
+**Trả lời:** *Container private được gọi API thoải mái* ⇒ **không cần bundle model**, không có ràng buộc offline.
+→ Mặc định: tối ưu `public_test` (634 mẫu), `infer.py` vẫn chạy được với API ở cả local lẫn container.
 
-**Default:** tối ưu cho `public_test`, nhưng giữ `infer.py` chạy được offline với model đã bundle.
+### A3. Size LLM
+**Trả lời:** *Qwen3-4B* — qua API OpenAI-compatible (nên "size" chỉ là model id phía server).
 
-> Trả lời:
+### A4. GPU
+**Trả lời:** *Có API* — không cần GPU cục bộ. LLM **và** STT đều gọi qua API.
 
----
-
-### A3. Có được dùng mô hình lớn hơn Qwen3-4B không?
-
-24 GB unified memory: 4B (≈8 GB bf16) thoải mái; 8B/14B chậm hơn ~2–3×.
-Plan đang hard-code `LLM_MODEL = "Qwen/Qwen3-4B"`.
-
-- [ ] Giữ Qwen3-4B
-- [ ] Được dùng Qwen3-8B / 14B nếu đo ra tốt hơn
-- [ ] Gợi ý model khác: ____________________
-
-**Default:** Qwen3-4B (đổi được sau bằng 1 biến config).
-
-> Trả lời:
+### A5. Hạn chót / quy mô
+**Trả lời:** chưa chốt cụ thể → dùng mặc định:
+- Lộ trình: **M0 → M1 → M3 → M2 → M4 → M5 → M6** (theo `Planning.md` §6).
+- Ablation: **300 mẫu held-out** (đủ để so cấu hình), xác nhận 1 lần bằng full train khi có thời gian.
+- Ưu tiên nếu thiếu thời gian: M0 → M1 → M3 → M2.
 
 ---
 
-### A4. Có GPU/NVIDIA ở đâu khác không (máy khác, cloud, thuê)?
+## B. QUAN TRỌNG
 
-Ảnh hưởng trực tiếp tới chi phí chạy:
-ASR ≈ 2 200 lượt chính (train 1545 + public 634) + ≈ 2 630 lượt trong `history`;
-LLM ≈ 2 200 lượt scope + ≈ 2 200 lượt planner. Trên M5 đây là **vài chục giờ**.
+### B1. Fine-tune
+**Trả lời:** *Không fine-tune.* `label.audio_text` chỉ dùng để phân tích (Pha 0) + few-shot retrieval (M4).
 
-- [ ] Không có, chạy M5
-- [ ] Có: ____________________ (GPU/VRAM?)
+### B2. Mô hình đã tải sẵn
+**Trả lời:** *Dùng API* ⇒ không cần tải model về máy.
 
-**Default:** chạy trên M5 (MPS), ưu tiên model nhỏ + cache aggressive.
+### B3. Cấu trúc repo
+**Trả lời:** mặc định theo `Planning.md` §2: `lifemate/` + `config.py` + `scripts/` + `eval/` + `tests/` ở gốc repo, data ở `train+public_test/`.
 
-> Trả lời:
+### B4. Hỏi linh hoạt
+**Trả lời:** mặc định — chỉ gọi `sys.ask_missing_info` khi **thiếu tham số bắt buộc** (đã verify: gold 217/217 mẫu ask trỏ `tool_name` là tool đã cài).
 
----
-
-### A5. Hạn chót thực tế + quy mô đội?
-
-- [ ] Hạn chót: ____________
-- [ ] Số người phụ trách code: ____________
-- [ ] Có chạy full 1545 mẫu train cho mỗi lần ablation được không, hay chỉ ~300 mẫu held-out?
-
-**Default:** ablation trên 300 mẫu held-out, full train 1 lần để xác nhận.
-
-> Trả lời:
+### B5. Giới hạn lượt/lệnh
+**Trả lời:** mặc định `MAX_TURNS = 6`, `MAX_WRITES = 8`.
 
 ---
 
-## B. QUAN TRỌNG — ảnh hưởng chất lượng; tôi tự quyết được nếu bạn không nói
+## C. MẶC ĐỊNH đã chọn (áp dụng luôn, không cần hỏi lại)
 
-### B1. Được dùng `label.audio_text` của train để **fine-tune** không?
-
-Train có 1545 mẫu có nhãn đầy đủ (1 217 act + 217 ask). Fine-tune planner (LoRA Qwen3-4B) hoặc fine-tune ASR có thể tăng đáng kể call-F1 so với prompt thuần.
-
-- [ ] Không fine-tune (đúng plan: chỉ phân tích + few-shot retrieval)
-- [ ] Có, cho phép LoRA planner
-- [ ] Có, cho phép fine-tune ASR
-
-**Default:** không fine-tune.
-
-> Trả lời:
-
----
-
-### B2. Mô hình đã tải sẵn chưa / lưu ở đâu?
-
-HF cache hiện trống. Cần: `Qwen/Qwen3-4B`, `vinai/PhoWhisper-medium` (hoặc `Qwen/Qwen3-ASR-0.6B`/`1.7B`), có thể thêm `Qwen3-ASR-1.7B` để so sánh.
-
-- [ ] Đã có sẵn ở: ____________________
-- [ ] Được tải về `models/` trong repo (không dùng HF cache)
-
-**Default:** tôi tải về `models/` trong repo.
-
-> Trả lời:
-
----
-
-### B3. Cấu trúc repo cuối cùng?
-
-Plan §2 đặt `lifemate/` + `scripts/`, `eval/`, `tests/` cạnh `train+public_test/`. Hiện tại repo chỉ có `Planning.md` + `train+public_test/`.
-
-- [ ] Đúng như plan §2: `lifemate/`, `scripts/`, `eval/`, `tests/`, `config.py` ở gốc, data ở `train+public_test/`
-- [ ] Khác: ____________________
-
-**Default:** đúng plan §2.
-
-> Trả lời:
-
----
-
-### B4. Agent có được "hỏi linh hoạt" không?
-
-Tôi đã verify: gold `sys.ask_missing_info` luôn trỏ `tool_name` là tool **đã cài** (217/217 mẫu). Câu hỏi: có mẫu nào cần hỏi thông tin **không suy ra được** mà vẫn gọi `ask` (ví dụ "gọi cho Minh" nhưng danh bạ không có Minh)?
-
-- [ ] Không, chỉ hỏi khi thiếu tham số bắt buộc (đúng plan)
-- [ ] Được hỏi linh hoạt (thêm ablation)
-
-**Default:** chỉ hỏi khi thiếu tham số bắt buộc.
-
-> Trả lời:
-
----
-
-### B5. Giới hạn số lượt/lệnh?
-
-Plan: `MAX_TURNS = 6`, `MAX_WRITES = 8`. Vòng B2 (gọi tool đọc có tham số rồi mới ghi) là chiến lược chính.
-
-- [ ] Giữ `MAX_TURNS = 6`, `MAX_WRITES = 8`
-- [ ] Muốn: ____________________
-
-**Default:** giữ nguyên.
-
-> Trả lời:
-
----
-
-## C. MẶC ĐỊNH — không cần trả lời (trừ khi muốn đổi)
-
-| # | Mặc định tôi sẽ đi |
+| # | Quyết định |
 |---|---|
-| C1 | Python 3.12 trong venv `.venv`, torch CPU/MPS (`PYTORCH_ENABLE_MPS_FALLBACK=1`) |
-| C2 | Không network lúc inference; model nằm trong `models/` |
-| C3 | Seed cố định, LLM greedy, không fine-tune |
-| C4 | `submission.jsonl` đúng format README (1 dòng/mẫu) + `runs/<tên>/metrics.json` + `debug/<id>.json` |
-| C5 | Test bằng `pytest tests/` (thêm `pytest` vào dev deps) |
-| C6 | Không commit gì — repo hiện **chưa phải git**; có muốn `git init` + commit từng mốc M0…M6 không? |
+| C1 | Python **3.12** trong venv `.venv`; thư viện: `numpy`, `soundfile`, `openai` (+ `pytest` cho test). Không cần `torch`/`transformers` |
+| C2 | LLM + STT gọi **OpenAI-compatible API**; có retry/backoff; **không** network-offline, **không** bundle model |
+| C3 | Seed cố định, `temperature=0` (greedy), không fine-tune |
+| C4 | Xuất `submission.jsonl` đúng format README (1 dòng/mẫu) + `runs/<tên>/metrics.json` + `debug/<id>.json` |
+| C5 | Test bằng `pytest tests/` |
+| C6 | **`git init` + commit theo từng mốc M0…M6** (đã được duyệt). Chỉ commit khi tới mốc, không commit file rác/cache/model |
+| C7 | Metric ưu tiên: **F1-call**; hash là chỉ số phụ (mục 1.1 `Planning.md`) |
+| C8 | ASR 2 mode: `api` (STT thật) và `gold` (`label.audio_text`, đo trần harness) — `ASR_MODE` trong `config.py` |
 
-> Ghi chú/điều chỉnh cho C:
+---
+
+## VIỆC CÒN THIẾU — cần điền vào env/config trước khi chạy thật
+
+> Không có 3 giá trị này thì mọi lượt gọi API đều fail. Tôi để placeholder trong `config.py`, điền qua biến môi trường.
+
+| Biến môi trường | Nội dung cần điền | Ghi chú |
+|---|---|---|
+| `LIFEMATE_LLM_BASE_URL` | vd `https://api.openai.com/v1` hoặc endpoint của provider | OpenAI-compatible |
+| `LIFEMATE_LLM_API_KEY` | key | **Không** commit key vào repo |
+| `LIFEMATE_LLM_MODEL` | model id có tool-calling, vd `gpt-4o-mini` | phải hỗ trợ `tools` |
+| `LIFEMATE_STT_BASE_URL` | endpoint STT (OpenAI-compatible `audio/transcriptions`) | |
+| `LIFEMATE_STT_API_KEY` | key (nếu khác key LLM) | |
+| `LIFEMATE_STT_MODEL` | model id STT, vd `whisper-1`, `gpt-4o-mini-transcribe`, `Qwen3-ASR-...` | chọn theo WER + lỗi thực thể (M2) |
+
+### Cần xác nhận thêm về endpoint (chưa rõ)
+1. Endpoint có hỗ trợ **tool-calling** (`tools`/`tool_choice`) không? Nếu không → phải đổi model hoặc dùng fallback text-JSON (đã ghi trong `Planning.md` 5.8).
+2. STT có hỗ trợ `temperature > 0` để lấy **n-best** không? Nếu không → chỉ có 1 transcript, mất `alt_values` của resolver (đã ghi trong 5.5).
+3. STT có trường `prompt` (hotwords/context) không? (quyết định `ENABLE_HOTWORD_REASR`).
+4. Có rate-limit/giới hạn đồng thời không (để chọn số worker khi gọi song song).
 
 ---
 

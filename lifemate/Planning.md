@@ -26,7 +26,7 @@ item + catalog
  ├─[2] SCOPE: ngoài phạm vi? → trả [] và kết thúc (chưa gọi tool nào)
  ├─[3] PREFETCH: gọi tool kind=read → snapshot
  ├─[4] LEXICON + RESOLVER: gợi ý thực thể/số/giờ từ n-best + snapshot
- ├─[5] PROMPT + PLANNER (Qwen3-4B, tool-calling gốc)
+ ├─[5] PROMPT + PLANNER (LLM qua API OpenAI-compatible, tool-calling)
  ├─[6] GATE: kiểm tra tất định theo schema + snapshot
  ├─[7] EXECUTOR: validate → call (mỗi lệnh ghi đúng một lần); vòng B2 cho bước phụ thuộc
  └─► env.get_tool_calls(), env.get_state_hash()
@@ -38,7 +38,7 @@ ASR chạy **trước** prefetch để mẫu ngoài phạm vi không để lại
 
 ## 1. Quy ước chung
 
-- Python ≥ 3.10 (dùng **3.12** trong venv: `torch`/`transformers` chưa chắc có wheel cho 3.15). Thư viện: `numpy`, `soundfile`, `torch`, `transformers`. Không dùng mạng khi chạy inference.
+- Python ≥ 3.10 (dùng **3.12** trong venv). Thư viện: `numpy`, `soundfile`, `openai` (client OpenAI-compatible). **LLM và STT đều gọi qua API OpenAI-compatible** (mạng được phép; container vòng private cũng gọi được) ⇒ không cần bundle model, không cần `torch`/`transformers` trừ khi bật fallback local (tuỳ chọn).
 - **Cấm** đọc, copy, parse bất cứ file nào dưới `<split>_environment/`. Dữ liệu app chỉ lấy qua `env.call`.
 - Mỗi mẫu tạo `ToolEnv` **đúng một lần**, trong `infer()`. Truyền `env` xuống các hàm khác, không tạo lại.
 - Mọi lời gọi `env.call` phải đi qua `executor.safe_call()` hoặc `prefetch`, không có lời gọi nào ngoài tầm kiểm soát.
@@ -70,6 +70,7 @@ Quy tắc bắt buộc cho tới khi chốt được công thức:
 ```
 lifemate/
   config.py
+  apiclient.py                        # client OpenAI-compatible + retry/backoff dùng chung (LLM & STT)
   catalog.py   prefetch.py   lexicon.py
   vi_norm.py   resolver.py   asr.py     scope.py
   llm.py       prompt.py     planner.py gate.py   executor.py
@@ -125,10 +126,25 @@ Tạo `tune_ids.txt` (75%) và `heldout_ids.txt` (25%) bằng seed cố định.
 
 ```python
 # config.py
+import os
+
 SPLIT_DEFAULT = "public_test"
-ASR_MODEL = "vinai/PhoWhisper-medium"      # [M2] chọn lại theo số đo
-LLM_MODEL = "Qwen/Qwen3-4B"
-ASR_BEAMS, ASR_NBEST = 5, 3
+
+# --- LLM: OpenAI-compatible endpoint (bắt buộc điền base URL + model id + key) ---
+LLM_BASE_URL = os.getenv("LIFEMATE_LLM_BASE_URL", "")
+LLM_API_KEY  = os.getenv("LIFEMATE_LLM_API_KEY", "")
+LLM_MODEL    = os.getenv("LIFEMATE_LLM_MODEL", "")     # id model phía server
+LLM_TEMPERATURE = 0
+LLM_TIMEOUT, LLM_MAX_RETRIES = 60, 5
+
+# --- STT (ASR): OpenAI-compatible audio transcriptions ---
+STT_BASE_URL = os.getenv("LIFEMATE_STT_BASE_URL", "")
+STT_API_KEY  = os.getenv("LIFEMATE_STT_API_KEY", "")
+STT_MODEL    = os.getenv("LIFEMATE_STT_MODEL", "")
+ASR_MODE = "api"                       # [M0] "api" (gọi STT) | "gold" (label.audio_text) | "local" (fallback Whisper)
+ASR_NBEST = 3                          # số ứng viên; API thường trả 1 → xem 5.5
+ENABLE_LLM_ALT_HYPS = False            # [M4] sinh "cách nghe khác" bằng LLM khi API chỉ có 1 transcript
+
 ENTITY_MATCH_THRESHOLD = 0.82
 SCOPE_LEX_THRESHOLD = 1.0                  # [M3] tune bằng eval/run.py --tune-scope
 PREFETCH_MODE = "after_scope"              # [M0] "after_scope" | "always"
@@ -312,21 +328,24 @@ Quy tắc (áp dụng theo thứ tự):
 | "ngày 20 tháng 12 lúc 10 giờ" | 2026-12-20T10:00:00+07:00, `conf` 0.6, alternatives có 22:00 |
 | "ngày mốt" | "2026-11-18" |
 
-### 5.5 `asr.py`
+### 5.5 `asr.py` (STT qua API)
 
 ```python
 class ASR:
-    def __init__(self, model_name): ...    # nạp một lần, dùng cho mọi mẫu
-    def transcribe(self, wav_path, hotwords: str | None = None) -> list[Hyp]
+    def __init__(self, mode="api", stt_model=None, base_url=None, api_key=None): ...
+    def transcribe(self, wav_path, prompt: str | None = None) -> list[Hyp]
 ```
 
 1. Đọc WAV bằng `soundfile`, ép mono float32, 16 kHz.
 2. **Cắt lặng:** tính năng lượng RMS theo khung 20 ms; giữ từ khung đầu tiên đến khung cuối cùng có RMS > `0.02 * max_rms` (chừa đệm 150 ms mỗi đầu). Nếu cắt xong dưới 0.3 s thì giữ nguyên bản gốc.
-3. Chạy mô hình kiến trúc Whisper (`WhisperForConditionalGeneration` + `WhisperProcessor`), `language="vi"`, `task="transcribe"`, `num_beams=ASR_BEAMS`, `num_return_sequences=ASR_NBEST`, `return_dict_in_generate=True`, `output_scores=True`. Điểm mỗi ứng viên = `sequences_scores`. Hotwords (nếu có): `ids = tokenizer(hotwords, add_special_tokens=False).input_ids` → `prompt_ids = processor.get_prompt_ids(ids)` (hàm này nhận **token ids**, không nhận chuỗi) rồi truyền vào `generate(prompt_ids=...)`; khi giải mã phải bỏ phần prompt khỏi văn bản.
-4. **Kiểm tra suy biến** `is_degenerate(text, duration)`: rỗng; hoặc số token / thời lượng (giây) > 6; hoặc có n-gram (n = 1..3) lặp liên tiếp ≥ 4 lần. Ứng viên suy biến bị loại. Nếu mọi ứng viên suy biến thì chạy lại một lần không có hotwords; nếu vẫn suy biến thì trả `[Hyp("", -inf)]`.
+3. **Gọi STT API** (OpenAI-compatible): `client.audio.transcriptions.create(model=STT_MODEL, file=bytes_wav, language="vi", response_format="json", temperature=0)` → lấy `text`.
+   - **n-best:** API thường trả **một** transcript. Thứ tự ưu tiên: (a) provider hỗ trợ sampling (`temperature` > 0) → gọi `ASR_NBEST` lần với `temperature` khác nhau, giữ các bản khác nhau; (b) nếu không → trả `[Hyp(top1, 1.0)]`, **không** có ứng viên thay thế (resolver mất `alt_values`; ghi rõ trong `debug/<id>.json`); (c) tuỳ chọn `ENABLE_LLM_ALT_HYPS`: LLM sinh 2 "cách nghe khác" từ top-1, chỉ dùng cho `extra["alt_values"]`.
+   - `prompt` (context/hotwords) chỉ dùng nếu provider hỗ trợ trường `prompt`.
+4. **Kiểm tra suy biến** `is_degenerate(text, duration)`: rỗng; hoặc số token / thời lượng (giây) > 6; hoặc có n-gram (n = 1..3) lặp liên tiếp ≥ 4 lần. Ứng viên suy biến bị loại. Nếu mọi ứng viên suy biến thì gọi lại một lần không prompt; nếu vẫn suy biến thì trả `[Hyp("", -inf)]`.
 5. Trả về danh sách sắp theo điểm giảm dần, `text` đã qua `normalize`.
+6. **Lỗi mạng:** `apiclient.py` bọc retry lũy thừa (429/5xx) tối đa `LLM_MAX_RETRIES`; hết lượt thì trả `[Hyp("", -inf)]` để mẫu đó điểm 0 nhưng không làm sập cả lượt chạy.
 
-`ENABLE_HOTWORD_REASR` (tùy chọn): sau khi có snapshot và scope là in-scope, gọi lại `transcribe` với hotwords = các tên trong `Entity.names` nối bằng `", "` (≤ 400 ký tự) cộng `user_profile`. Chỉ dùng kết quả mới nếu không suy biến.
+`ENABLE_HOTWORD_REASR` (tùy chọn): sau khi có snapshot và scope là in-scope, gọi lại `transcribe` với `prompt` = các tên trong `Entity.names` nối bằng `", "` (≤ 400 ký tự) cộng `user_profile`. Chỉ dùng kết quả mới nếu không suy biến.
 
 **Hàm `transcribe_sample(item, asr, split_dir) -> (hyps_current, history_texts)`:** ASR audio hiện tại; với mỗi lượt user trong `history` có đường dẫn audio (xem `inspect_data.py` để biết khóa), chạy ASR top-1 để lấy văn bản. Cache **theo đường dẫn audio** (mỗi lượt history là một file riêng, không dùng chung key `id`) trong `cache/asr_<split>.json` khi chạy eval.
 
@@ -337,7 +356,7 @@ def in_scope(llm, hyps, tools, ctx) -> tuple[bool, dict]   # dict: debug (lex_sc
 ```
 
 1. **Điểm từ vựng:** BM25 (tự cài, k1=1.5, b=0.75) giữa transcript top-1 (đã bỏ dấu) và "tài liệu" của mỗi tool = `app + name_vi + tên tool + mô tả` (đã bỏ dấu). `lex = max score`.
-2. **LLM:** prompt ngắn (không có snapshot): danh sách `tool.name: mô tả` + câu `Yêu cầu: {transcript}`. Chỉ thị: "Trả lời đúng một từ. CO nếu có công cụ nào thực hiện được yêu cầu, hoặc yêu cầu thiếu thông tin nhưng thuộc phạm vi của công cụ. KHONG nếu không công cụ nào liên quan." `max_new_tokens=3`.
+2. **LLM:** prompt ngắn (không có snapshot): danh sách `tool.name: mô tả` + câu `Yêu cầu: {transcript}`. Chỉ thị: "Trả lời đúng một từ. CO nếu có công cụ nào thực hiện được yêu cầu, hoặc yêu cầu thiếu thông tin nhưng thuộc phạm vi của công cụ. KHONG nếu không công cụ nào liên quan." `max_tokens=3`, `temperature=0`.
 3. **Quyết định:** ngoài phạm vi chỉ khi `LLM == KHONG` **và** `lex < SCOPE_LEX_THRESHOLD`. Ngưỡng tối ưu trên train (`eval/run.py --tune-scope`: quét ngưỡng, chọn giá trị tối đa hóa độ chính xác `refuse` mà recall `act/ask` không dưới 99%).
 4. Khi ngoài phạm vi: `agent` dừng, `tool_calls = env.get_tool_calls()` (rỗng), lấy `state_hash`.
 5. Tối ưu tốc độ (không đổi hành vi): quy tắc 3 là "ngoài phạm vi **khi và chỉ khi** LLM==KHONG **và** lex < ngưỡng" ⇒ khi `lex >= SCOPE_LEX_THRESHOLD` thì kết luận in-scope và **không cần gọi LLM** (tiết kiệm ~1 lượt LLM/mẫu, ~2200 mẫu train+public). Vẫn phải kiểm tra recall trên held-out sau khi tối ưu này.
@@ -364,19 +383,22 @@ Nếu mơ hồ thì thêm `hoặc <alt>`.
 
 **Test (`tests/test_resolver.py`):** snapshot giả có contacts `Thư`, `Thu`, `Hương`; transcript "chuyển cho chị thư năm trăm nghìn" → hint entity trỏ đúng; lỗi dấu ("hương" ↔ "hướng") vẫn khớp.
 
-### 5.8 `llm.py`
+### 5.8 `llm.py` (OpenAI-compatible API)
 
 ```python
 class LLM:
-    def __init__(self, model_name): ...       # nạp một lần
-    def generate(self, messages, tools=None, max_new_tokens=512) -> str
-def parse_tool_calls(text: str) -> list[Call]
-def extract_text(text: str) -> str
+    def __init__(self, base_url, api_key, model, temperature=0, timeout=60, max_retries=5): ...
+    def generate(self, messages, tools=None, max_tokens=512) -> tuple[list[Call], str]   # (calls, text)
+def parse_tool_calls(message: dict) -> list[Call]     # từ response API (structured)
+def parse_tool_calls_text(text: str) -> list[Call]    # fallback: server trả tool call dạng text
+def extract_text(message: dict) -> str
 ```
 
-- Dùng `tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, enable_thinking=False)`; greedy.
-- `parse_tool_calls`: `re.findall(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.S)`; mỗi cái `json.loads` trong `try/except` (lỗi → bỏ qua). Lấy `name` và `arguments` (nếu `arguments` là chuỗi thì `json.loads` tiếp). Trả `[]` nếu không tìm được.
-- `extract_text`: phần văn bản ngoài các khối `<tool_call>`, dùng để phát hiện `KHONG_HO_TRO` hoặc `XONG`.
+- Client: `openai.OpenAI(base_url=..., api_key=...)`; gọi `client.chat.completions.create(model=LLM_MODEL, messages=messages, tools=tools, tool_choice="auto", temperature=LLM_TEMPERATURE, max_tokens=max_tokens)`. Mọi lời gọi đi qua `apiclient.py` (retry lũy thừa + backoff, log request/response vào `debug/<id>.json`).
+- **Tool call dạng structured (ưu tiên):** đọc `resp.choices[0].message.tool_calls` → mỗi phần tử có `.id`, `.function.name`, `.function.arguments` (chuỗi JSON → `json.loads` trong `try/except`, lỗi → bỏ qua). Giữ luôn `id` để gửi lại trong message `role="tool"` (bắt buộc theo API).
+- **Fallback text:** nếu `tool_calls` rỗng nhưng `message.content` chứa JSON/`<tool_call>` → `parse_tool_calls_text` (regex `<tool_call>...</tool_call>` như bản cũ, rồi thử `json.loads` cả khối). Trả `[]` nếu không có gì.
+- `extract_text`: `message.content` (bỏ mọi khối tool call), dùng để phát hiện `KHONG_HO_TRO` hoặc `XONG`. Lỗi API → trả `([], "")` để mẫu đó điểm 0 nhưng không làm sập cả lượt chạy.
+- Với endpoint không hỗ trợ `tools` (tool-calling) → phải dùng model có tool-calling; nếu không, fallback sang prompt dạng text + `parse_tool_calls_text` (xem mục 5.9).
 
 ### 5.9 `prompt.py` và `planner.py`
 
@@ -416,11 +438,10 @@ Dữ liệu ứng dụng:
 
 ```python
 def plan(llm, tools, ctx_messages) -> tuple[list[Call], str]:  # (calls, text)
-    text = llm.generate(ctx_messages, tools=to_llm_tools(tools))
-    return parse_tool_calls(text), extract_text(text)
+    return llm.generate(ctx_messages, tools=to_llm_tools(tools))
 ```
 
-Truyền toàn bộ `tools` (kể cả tool đọc) để planner có thể gọi tool đọc có tham số ở các lượt sau. Gate chặn việc gọi lại tool đọc đã có trong snapshot.
+Truyền toàn bộ `tools` (kể cả tool đọc) để planner có thể gọi tool đọc có tham số ở các lượt sau. Gate chặn việc gọi lại tool đọc đã có trong snapshot (xem `BLOCK_READ_ALREADY_PREFETCHED`, mục 1.1).
 
 ### 5.10 `gate.py` (module quan trọng nhất)
 
@@ -478,7 +499,7 @@ Vòng lặp (B2), `turn` từ 1 đến `MAX_TURNS`:
 1. `raw_calls, text = plan(llm, tools, messages)`.
 2. `res = gate(...)`. Nếu `res.refuse` → kết thúc (ở `turn == 1` nghĩa là từ chối, không gọi tool nào).
 3. Ở `turn ≥ 2`: bỏ mọi lệnh ghi **giống hệt** (tên + args) một lệnh đã thực thi trong mẫu này, trừ khi transcript chứa một từ trong `REPEAT_MARKERS`. Mục đích: chặn vòng lặp ảo của mô hình sau khi đã xong việc.
-4. Thực thi từng `call` trong `res.calls`: nếu tool `kind=="write"` thì tăng bộ đếm ghi; vượt `MAX_WRITES` thì dừng. `result = safe_call(env, ...)`. Thêm vào `messages` một assistant message mang `tool_calls` và một message `role="tool"` chứa `json.dumps(result, ensure_ascii=False)[:3000]`.
+4. Thực thi từng `call` trong `res.calls`: nếu tool `kind=="write"` thì tăng bộ đếm ghi; vượt `MAX_WRITES` thì dừng. `result = safe_call(env, ...)`. Thêm vào `messages` một assistant message mang `tool_calls` (API shape: `id`, `type="function"`, `function.name`, `function.arguments` — dùng `id` đã lưu từ response) và một message `role="tool"` chứa `json.dumps(result, ensure_ascii=False)[:3000]` **kèm `tool_call_id` tương ứng** (API bắt buộc `tool_call_id`).
 5. Nếu `res.ask`: thực thi `safe_call(env, "sys.ask_missing_info", {"tool_name":..., "params":[...]})` (sau các call của lượt này nếu `ASK_AFTER_PARTIAL`), rồi **kết thúc vòng lặp**.
 6. Nếu không có call nào được thực thi trong lượt này (và không ask) → kết thúc.
 7. Nếu `text` chứa `XONG` → kết thúc. Ngược lại sang lượt kế (planner thấy kết quả tool và có thể gọi bước phụ thuộc).
@@ -533,7 +554,7 @@ python eval/run.py --split train --ids heldout_ids.txt --asr gold|real --out run
 - Xuất `metrics.json`: **F1 call** (macro trên mẫu; khớp `(name, arguments)`; thêm biến thể chỉ khớp `name` vì chưa biết BTC khớp mềm hay cứng) **và** tỉ lệ khớp `state_hash` (kèm khớp state từng app), theo nhóm (`act/ask/refuse`), theo app; với `ask`: tỉ lệ đúng `tool_name` và đúng tập `params`; số mẫu mỗi loại lỗi. Xem mục 1.1 — không được chỉ báo cáo hash.
 - **Taxonomy lỗi** (gán tự động bằng so sánh với gold, mỗi mẫu sai một nhãn): `scope_false_refuse`, `scope_missed_refuse`, `ask_vs_act`, `act_vs_ask`, `wrong_tool`, `wrong_arg_entity`, `wrong_arg_number`, `wrong_arg_time`, `wrong_id`, `gate_dropped_valid`, `exception`.
 - `--tune-scope`: quét `SCOPE_LEX_THRESHOLD` (mục 5.6).
-- `eval/asr_eval.py`: chạy từng ứng viên ASR trên audio train, tính WER và **lỗi thực thể** (thực thể gold trích ở Pha 0, so khớp sau `normalize`). Ứng viên: PhoWhisper-small/medium, Qwen3-ASR-0.6B/1.7B và các mô hình khác nếu có; chọn theo lỗi thực thể, không chỉ WER.
+- `eval/asr_eval.py`: chạy từng ứng viên STT trên audio train (các model/endpoint khác nhau qua API + chế độ `gold`), tính WER và **lỗi thực thể** (thực thể gold trích ở Pha 0, so khớp sau `normalize`). Chọn theo lỗi thực thể, không chỉ WER.
 
 ### 5.15 Module có điều kiện (làm sau khi lõi chạy; mỗi cái một ablation trên held-out)
 
@@ -552,7 +573,7 @@ Quy tắc chung: module nào không tăng điểm trên held-out (đo **cả** F
 |---|---|---|
 | **M0** | `inspect_data.py`, `analyze_train.py`, `gold_hash.py`, `split.py`; điền các giá trị `[M0]` trong `config.py`; **chốt công thức chấm** (mục 1.1) hoặc ghi rõ giả định đang dùng | Có `reports/*.json`; `gold_hash.json` đủ mọi mẫu train; kiểm tra "tạo ToolEnv lần hai không rò trạng thái" đạt; `eval/metrics.py` xuất đồng thời F1-call và hash |
 | **M1** | `catalog.py`, `prefetch.py`, `lexicon.py`, `llm.py`, `prompt.py`, `planner.py`, `gate.py` (phần 1-8), `executor.py`, `agent.py` (chưa có ASR, dùng `--asr gold`), `eval/run.py` | `tests/test_catalog.py`, `tests/test_gate.py` qua; chạy `--asr gold` trên held-out cho ra `metrics.json`; số này là trần của harness |
-| **M2** | `vi_norm.py` + `tests/test_vi_norm.py` (toàn bộ bảng 5.4 phải qua); `asr.py`; `eval/asr_eval.py` đo WER và lỗi thực thể cho các ứng viên; chọn `ASR_MODEL` | Có bảng so sánh ASR; chọn xong mô hình |
+| **M2** | `vi_norm.py` + `tests/test_vi_norm.py` (toàn bộ bảng 5.4 phải qua); `asr.py` (chế độ `api` + `gold`); `eval/asr_eval.py` đo WER và lỗi thực thể cho các ứng viên STT | Có bảng so sánh STT; chốt `STT_MODEL`/endpoint và `ASR_MODE` |
 | **M3** | `scope.py`, `resolver.py`, `tests/test_resolver.py`, nối ASR thật vào `agent.py`, chạy `--asr real`, tune `SCOPE_LEX_THRESHOLD` | `metrics.json` ở chế độ `real`; chênh lệch với M1 cho biết phần mất do ASR; mọi mẫu `refuse` của held-out cho `tool_calls == []` khi scope đúng |
 | **M4** | Bật từng cờ ở 5.15, mỗi lần một ablation | Mỗi cờ có bảng so sánh trên held-out (F1-call + hash); giữ cờ nào tăng điểm |
 | **M5** | Che/đổi tên tool trong catalog dev rồi chạy lại (kiểm tra tổng quát hóa); đo thời gian chạy toàn bộ một split | Độ sụt điểm khi đổi tên tool được ghi nhận; `infer.py` xuất đủ một dòng cho mỗi `id` |
