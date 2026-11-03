@@ -1,0 +1,116 @@
+# ============================================================
+# 1. Python / virtualenv
+# ============================================================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+pip-wheel-metadata/
+
+# ============================================================
+# 2. Test / lint / type-check caches
+# ============================================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.cache/
+
+# ============================================================
+# 3. Biến môi trường & bí mật
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml
+secrets.yml
+
+# ============================================================
+# 4. Hệ điều hành & editor
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ============================================================
+# 5. Artefact sinh ra khi chạy (theo Planning.md)
+# ============================================================
+# Cache trung gian: duckdb cache, asr cache, gold hash
+cache/
+# Báo cáo khảo sát dữ liệu
+reports/
+survey/
+# Kết quả chạy / log debug từng mẫu
+runs/
+debug/
+logs/
+*.log
+# Model đã train (calibrator, index BM25)
+models/
+*.pkl
+*.joblib
+*.parquet
+# Submission & ngân hàng ví dụ
+submission.jsonl
+bank.jsonl
+bank_index.pkl
+unmatched.jsonl
+features.parquet
+calibration.md
+
+# ============================================================
+# 6. Model weights / HuggingFace cache
+# ============================================================
+models--*/
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.onnx
+
+# ============================================================
+# 7. Dữ liệu lớn (không commit — repo còn >2GB)
+# ============================================================
+# lifemate: audio
+lifemate/train+public_test/*/audio/
+# lifemate: trạng thái app (environment)
+lifemate/train+public_test/*/*_environment/
+# lifemate: output của chính ban tổ chức
+lifemate/train+public_test/*/submission.jsonl
+# datamate: dữ liệu business (xlsx, csv, sqlite)
+datamate/train/data/
+datamate/public_test/data/
+# datamate: file dữ liệu sinh ra khi nạp
+*.duckdb
+*.sqlite
+*.sqlite3
+# dump / backup
+*.dump
+*.bak
