@@ -108,6 +108,8 @@ Phân bố 3000 câu train theo `type`: `number` 1884 · `percent` 578 · `list`
                               [G] answerability ─► [H] quyết định p̂>0.5 ─► [I] formatter
 ```
 
+> **Lý do đầy đủ** cho kiến trúc này (vì sao mỗi khối tồn tại, các quyết định cốt lõi): [`Planning.md`](Planning.md).
+
 Ba nguyên tắc cốt lõi:
 
 1. **Luật được áp đúng một lần, ở tầng view.** Doanh thu, loại đơn huỷ/trả, cắt theo `as_of` đều nằm trong SQL view — LLM không bao giờ tự viết logic đó.
@@ -120,25 +122,28 @@ Ba nguyên tắc cốt lõi:
 
 ## Cấu trúc code mục tiêu
 
-Theo [`Planning.md`](Planning.md) §1 — code nằm **ngay trong `datamate/`**, không tạo `datamate/datamate/`:
+Theo [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) §1 — code nằm **ngay trong `datamate/`**, không tạo `datamate/datamate/`:
 
 ```text
 datamate/
 ├── config.py            # Config, DEFAULT_KNOBS
 ├── dtypes.py            # dataclass dùng chung
 ├── ingest/              # reader.py (csv/xlsx/sqlite), clean.py (header, số, ngày)
-├── schema/              # roles.py, mapper.py, invariants.py, views.py
+├── schema/              # roles.py, archetypes.py, mapper.py, canon.py, invariants.py, views.py
 ├── rules/               # knobs.py, rulebook_parser.py
 ├── timeutil/            # calendar_vi.py, resolver.py
-├── text/                # normalize.py, entity_linker.py, bm25.py
-├── engine/              # metrics.py, executor.py, sandbox.py
-├── llm/                 # client.py, prompts.py, schemas.py
+├── text/                # normalize.py, entity_linker.py, bm25.py, numeric_filters.py
+├── engine/              # registry.py, templates.py, compile.py, executor.py, sandbox.py, answer.py
+├── llm/                 # client.py, fake.py, prompts.py, schemas.py
 ├── paths/               # path1_spec.py, path2_sql.py
 ├── decide/              # answerability.py, features.py, calibrate.py, decider.py, escalate.py
 ├── fmt/                 # formatter.py, compare.py
-├── dev/                 # survey.py, evaluate.py, enumerate_match.py, build_bank.py, run_train.py
+├── dev/                 # survey.py, evaluate.py, enumerate_match.py, tag_group.py,
+│                        #   calibrate.py, repro_check.py
+├── docs/                # m04.md, m05.md, m08.md (nhật ký thiết kế + kết quả đo)
 ├── predict.py           # orchestrator: sinh submission.jsonl
 ├── tests/
+├── BACKLOG.md           # việc chưa xong
 └── train/ public_test/  # dữ liệu
 ```
 
@@ -168,7 +173,7 @@ export DATAMATE_LLM_MODEL="Qwen3-4B-Instruct"
 ## Chạy
 
 ```bash
-# 1) Khảo sát dữ liệu (bước M0 — làm trước tiên, cho ra survey/ và reports/)
+# 1) Khảo sát dữ liệu (bước M0 — làm trước tiên, cho ra survey/)
 python dev/survey.py
 
 # 2) Chấm một file submission trên tập train
@@ -177,15 +182,44 @@ python dev/evaluate.py --submission public_test/submission.jsonl --answers train
 # 3) Sinh submission cho public test (split và đường dẫn đọc từ config.py)
 python predict.py
 
-# 4) Đo PA có kiểm soát trên train (leave-one-business-out)
-python dev/run_train.py
+# 4) Đo tỉ lệ khớp của phần tất định trên train (đo có kiểm soát)
+python dev/enumerate_match.py --split train --scope dev     --out survey/run_dev
+python dev/enumerate_match.py --split train --scope holdout --out survey/run_holdout
+
+# 5) Hiệu chỉnh bộ quyết định (M12) từ kết quả đo
+python dev/calibrate.py --run survey/run_dev
+
+# 6) Kiểm tra tái lập (chạy 2 lần, so kết quả)
+python dev/repro_check.py --split train --limit 200
+
+# 7) Chạy test
+python -m pytest tests/ -q
 ```
 
-`config.py` khai báo `split` (`train` | `public_test`), `out_path` (mặc định `public_test/submission.jsonl`), `log_dir` (mặc định `public_test/logs/`) và `deadline_s` (mặc định `5,25·3600`) — file được ghi **nguyên tử** sau mỗi lô ≤ 200 câu, nên chạy dở vẫn có file hợp lệ.
+`config.py` khai báo `split` (`train` | `public_test`), `out_path` (mặc định `public_test/submission.jsonl`), `log_dir` (mặc định `public_test/logs/`) và `deadline_s` (mặc định `5,25·3600`).
 
 `dev/evaluate.py` in ra: PA tổng, PA theo `type`, theo business, tỉ lệ coverage (không abstain) và precision.
 
 **Lưu ý:** `dev/evaluate.py` chỉ dùng cho train (có nhãn). `public_test` **không có đáp án** — dùng nó để phát triển được, nhưng không dùng để rút luận (không rò rỉ đáp án).
+
+---
+
+## Trạng thái hiện tại (đo trên `train`)
+
+| hạng mục | kết quả |
+|---|---|
+| Phần **tất định** khớp đáp án thật (dev, 2367 câu) | **21.9%** (core 21.9%, other 27.5%, tail 1.6%) |
+| Phần tất định khớp (holdout, 633 câu) | **14.4%** |
+| **PA** sau bộ quyết định (dev / holdout / toàn train) | **+0.042 / +0.016 / +0.027** (trả lời mọi câu: −0.63) |
+| Rulebook train → `DEFAULT_KNOBS` | khớp 100% (không knob nào lệch) |
+| Rulebook test | ra đúng 3 ngành mới (`baby`, `repair`, `phone`), không câu nào rơi |
+| Answerability (M11) | bắt 14/70 câu null, chỉ 1 trả lời sai (đo trên 3000 câu train) |
+| Test (`pytest tests/`) | 38 test pass |
+
+Chi tiết: [`docs/m08.md`](docs/m08.md) (kết quả đo + nhật ký phát hiện) và
+[`BACKLOG.md`](BACKLOG.md) (việc chưa xong — cổng G2 của bản kế hoạch là ≥70% core,
+hiện **chưa đạt**; nguyên nhân chính là bộ lọc theo giá trị và các metric nghiệp vụ
+còn thiếu).
 
 ---
 
@@ -223,7 +257,9 @@ So khớp sau khi đúng format:
 
 ## Lộ trình milestone
 
-Chi tiết đầy đủ (từng file, từng hàm, thuật toán, tiêu chí nghiệm thu) trong [`Planning.md`](Planning.md) §3.
+Chi tiết đầy đủ (từng file, từng hàm, thuật toán, tiêu chí nghiệm thu, **IN/OUT scope**) trong [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) §3 — bản **đầy đủ các step**, tới lúc nộp bài.
+**Phase 1 (đang làm):** [`EXECUTION-MVP.md`](EXECUTION-MVP.md) — cùng các step, nhưng LLM gọi **API MiniMax M3.1-flash**, không deploy, không nộp bài.
+Trước khi code milestone nào phải có `docs/mNN.md` (thiết kế chi tiết) — xem [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) mục 0.2.
 
 | M | Nội dung | Nghiệm thu |
 |---|---|---|
@@ -242,6 +278,8 @@ Chi tiết đầy đủ (từng file, từng hàm, thuật toán, tiêu chí ngh
 | **M12** | Quyết định, calibration, leo thang (`decide/`) | PA mô phỏng trên train |
 | **M13** | Orchestrator + logging (`predict.py`) | `submission.jsonl` hợp lệ cho 100% id, ghi nguyên tử |
 | **M14** | Ablation 4 cấu hình (chỉ đường 1 / chỉ đường 2 / cả hai / cộng leo thang) | giữ cấu hình cao nhất |
+| **M15** | Mở rộng ngành mới (sửa xe, điện thoại, mẹ và bé — chỉ có ở `public_test`) | view + metric riêng, kiểm tay 10 câu/ngành |
+| **M16** | Đóng gói Docker + tái lập + nộp (offline, trọng số trong image) | `submission.jsonl` 100% id, `|ΔPA| < 0.01`, đúng luật thi |
 
 Thứ tự phụ thuộc:
 
@@ -259,7 +297,7 @@ M0 ─► M1 ─► M2 ─┐
 
 ## Nguyên tắc bắt buộc
 
-Áp dụng cho mọi file do LLM implementer viết:
+Áp dụng cho mọi file do LLM implementer viết. **Nguồn chuẩn: [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) §0.4** (9 quy tắc vàng + cơ chế chống out-of-scope). Danh sách dưới là bản tóm tắt cho người đọc nhanh:
 
 - Dùng **API LLM được cấp** (OpenAI-compatible), không tự host model. `base_url`/`api_key`/`model` đọc từ `config.py` hoặc biến môi trường — **không** hard-code, **không** commit key.
 - **Không** có `if business_id == ...` hay logic theo id câu hỏi.
@@ -276,8 +314,12 @@ M0 ─► M1 ─► M2 ─┐
 
 | Tệp | Nội dung |
 |---|---|
-| [`Planning.md`](Planning.md) | Kiến trúc, hợp đồng dữ liệu (`dtypes.py`), milestone M0 → M14, thứ tự làm, những điểm còn phải tự điền khi gặp dữ liệu thật |
-| [`Questions.md`](Questions.md) | Biên bản quyết định đã chốt: LLM & hạ tầng, cách chấm & nộp bài, phạm vi nghiệp vụ, luật nghiệp vụ (D0–D12), phụ lục dữ kiện đã khảo sát |
+| [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) | **NGUỒN CHUẨN cho mọi quy tắc hiện thực**: đặc tả code, IN/OUT scope từng milestone, tiêu chí nghiệm thu, quy tắc vàng, cây repo, hợp đồng `dtypes.py` |
+| [`Planning.md`](Planning.md) | **Rationale**: tại sao kiến trúc này, vì sao mỗi khối tồn tại, các quyết định cốt lõi ảnh hưởng kiến trúc |
+| [`EXECUTION-MVP.md`](EXECUTION-MVP.md) | **Phase 1** — cùng đầy đủ step, nhưng LLM gọi **API MiniMax**, không deploy/nộp bài |
+| [`DECISIONS.md`](DECISIONS.md) | **Record**: 18 quyết định đã chốt kèm lý do và nguồn (LLM & hạ tầng, cách chấm & nộp bài, phạm vi nghiệp vụ, luật nghiệp vụ D0–D12) + phụ lục dữ kiện đã khảo sát |
+| `docs/mNN.md` | Thiết kế chi tiết của từng milestone — **bắt buộc có trước khi code** (M4, M5, M8, M9, M10, M12) |
+| `BACKLOG.md` | Việc phát sinh, **chưa** làm — nơi đổ mọi phát sinh thay vì vá tay trong code |
 | `train/rulebook.md` | Luật nghiệp vụ bộ train (10 mục: đơn hàng, thời gian, xếp hạng, công nợ, kho, định dạng đáp án…) |
 | `public_test/rulebook.md` | Luật bộ test — thêm 3 ngành mới: **Mẹ và bé**, **Sửa xe**, **Cửa hàng điện thoại** |
 | `data/<business>/README.md` | Mô tả cột và quy ước riêng của từng shop (input hợp lệ cho agent) |

@@ -1,9 +1,11 @@
-.venv/
+# artefact sinh ra khi chạy (không commit)
+survey/
+models/
+public_test/logs/
+train/logs/
+*.duckdb
 __pycache__/
 *.pyc
-cache/
-models/
-survey/
-data_cache/
-*.duckdb
+.pytest_cache/
+.venv/
 .DS_Store

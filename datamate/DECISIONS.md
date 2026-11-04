@@ -1,4 +1,7 @@
-# Questions.md — Biên bản quyết định trước khi implement
+# DECISIONS.md — Biên bản quyết định (record, KHÔNG phải spec)
+
+> **Đây là record, không phải nguồn chuẩn.** Nguồn chuẩn cho mọi quy tắc hiện thực là [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md); khi hai file lệch nhau, `EXECUTION-PLAN.md` thắng và file này phải được sửa theo.
+> Lý do đổi tên từ `Questions.md`: file không còn chứa câu hỏi nào — nó chỉ ghi lại các quyết định đã chốt kèm lý do.
 
 **Trạng thái: đã chốt.** Các câu dưới đây đã được hỏi trực tiếp và có quyết định. Mục "mặc định tôi tự áp dụng" là các quyết định tôi tự chọn theo rulebook — có thể override bất cứ lúc nào.
 
@@ -10,16 +13,18 @@ Nếu muốn đổi một quyết định, sửa dòng `**Quyết định:**` t�
 
 | # | Câu hỏi | **Quyết định** |
 |---|---|---|
-| A1 | Model LLM nào | `Qwen3-4B-Instruct`, qua API OpenAI-compatible |
-| A2 | Có API LLM sẵn không | **Có** — dùng API được cấp, không tự host model |
+| A1 | Model LLM nào | **Dev/phase 1:** `MiniMax M3.1-flash` qua API OpenAI-compatible. **Bản cuối:** `Qwen3-4B` self-host (vLLM trong image) |
+| A2 | Có API LLM sẵn không | **Có ở lúc dev** — dùng API được cấp. **Lúc nộp bài: luật thi bắt chạy offline** ⇒ model phải nằm trong image (M16 của `EXECUTION-PLAN.md`) |
 | A3 | RAM máy | 16 GB — **không còn là ràng buộc chính** (batch nằm ở server API) |
-| A4 | Mạng lúc setup | Không cần tải model local; API dùng được cả ở vòng private (Docker của đội) |
+| A4 | Mạng lúc setup | Dev: không cần tải model local (gọi API). Vòng nộp: **offline** ⇒ tải trọng số lúc build image |
 | A5 | Có GPU NVIDIA không | Không → **không dùng vLLM**, dùng API |
 | A6 | Deadline | Để trong `config.py`, mặc định `5,25·3600`; tự co giãn k₁/k₂ theo thời gian còn lại |
 | A7 | Song song hoá | **16 luồng**, không giới hạn RPM, backoff khi 429/5xx |
 | A8 | Câu hỏi trong prompt | **Câu gốc có dấu** + danh sách entity đã khớp (tên master, mã, điểm) |
 
-**Hệ quả:** quy ước "không gọi API ngoài" ở mục 0 của plan đã bị gỡ. `api_key` **không** hard-code, **không** commit — đọc từ biến môi trường.
+**Hệ quả:** quy ước "không gọi API ngoài" đã bị gỡ ở tầng dev. `api_key` **không** hard-code, **không** commit — đọc từ biến môi trường `DATAMATE_LLM_API_KEY`.
+
+**Phase 1 vs bản cuối:** phase 1 (`EXECUTION-MVP.md`) chạy end-to-end bằng API, không deploy, không nộp bài. Bản cuối (`EXECUTION-PLAN.md`) thêm M16 (Docker + model local offline + luật thi BTC).
 
 ---
 
@@ -28,7 +33,7 @@ Nếu muốn đổi một quyết định, sửa dòng `**Quyết định:**` t�
 | # | Câu hỏi | **Quyết định** |
 |---|---|---|
 | B1 | File nộp | `public_test/submission.jsonl` |
-| B2 | Vòng private | Docker của đội; API vẫn gọi được |
+| B2 | Vòng private | Docker của đội, chạy **offline**, trọng số model trong image, `predict.sh` đọc `/data` ghi `/result/submission.jsonl` |
 | B3 | Dev trên `public_test` | **Được** (không có nhãn → không rò rỉ đáp án); rulebook public test cũng là input hợp lệ để parse |
 | B4 | Chia holdout | **6/30 business** holdout cố định theo seed (ghi trong `config.py`), phủ cả retail lẫn ngành khác |
 | B5 | Mục tiêu | *mặc định:* tối ưu PA, không ép coverage tối thiểu |

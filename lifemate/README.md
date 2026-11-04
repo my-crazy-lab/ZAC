@@ -93,7 +93,7 @@ item + catalog
   ├─[2] SCOPE: ngoài phạm vi? → trả [] và kết thúc (chưa gọi tool nào)
   ├─[3] PREFETCH: gọi tool kind=read → snapshot
   ├─[4] LEXICON + RESOLVER: gợi ý thực thể/số/giờ từ n-best + snapshot
-  ├─[5] PROMPT + PLANNER (Qwen3-4B, tool-calling gốc)
+  ├─[5] PROMPT + PLANNER (LLM qua API OpenAI-compatible, tool-calling)
   ├─[6] GATE: kiểm tra tất định theo schema + snapshot
   ├─[7] EXECUTOR: validate → call (mỗi lệnh ghi đúng một lần); vòng B2 cho bước phụ thuộc
   └─► env.get_tool_calls(), env.get_state_hash()
@@ -105,31 +105,37 @@ item + catalog
 
 ## Cấu trúc code mục tiêu
 
-Theo [`Planning.md`](Planning.md) §2:
+Theo [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) (mục 6 đặc tả từng module) và
+[`EXECUTION-MVP.md`](EXECUTION-MVP.md) (phạm vi MVP):
 
 ```text
-lifemate/
-├── config.py          # config tập trung (LLM/STT endpoint, knob, giới hạn)
-├── apiclient.py       # client OpenAI-compatible + retry/backoff (dùng chung LLM & STT)
+lifemate/                       # ← thư mục package (…/1vin/lifemate/lifemate)
+├── config.py          # config tập trung (LLM endpoint, knob, giới hạn) + `--set` cho ablation
+├── envloader.py       # nạp `zaic_tools` của 1 split (1 process = 1 split)
+├── apiclient.py       # client OpenAI-compatible + retry/backoff
 ├── catalog.py         # nạp & chuẩn hoá tools catalog
 ├── prefetch.py        # gọi tool read, dựng snapshot
-├── lexicon.py         # từ vựng thực thể trong môi trường
-├── vi_norm.py         # chuẩn hoá tiếng Việt (giữ dấu / bỏ dấu)
-├── resolver.py        # giải thực thể, số, giờ
-├── asr.py             # STT qua API (n-best)
-├── scope.py           # quyết định ngoài phạm vi
-├── llm.py             # client LLM (OpenAI-compatible)
+├── lexicon.py         # cắt gọn snapshot
+├── vi_norm.py         # chuẩn hoá tiếng Việt: văn bản / số / giờ
+├── datatypes.py       # dataclass dùng chung (tên `types.py` sẽ che stdlib `types`)
+├── state_store.py     # gom kết quả env.call → snapshot / entities / ids
+├── history.py         # lịch sử hội thoại
+├── resolver.py        # giải thực thể, số, giờ (gợi ý)
+├── scope.py           # quyết định ngoài phạm vi (BM25 + LLM)
+├── llm.py             # client LLM (structured tool-calls + fallback text-JSON)
 ├── prompt.py          # dựng prompt
+├── retrieval.py       # few-shot BM25 (có điều kiện)
+├── policy_text.py     # quy tắc chính sách dạng câu
 ├── planner.py         # LLM sinh kế hoạch tool call
 ├── gate.py            # kiểm tra tất định (module quan trọng nhất)
-├── executor.py        # validate → call
-├── retrieval.py       # few-shot BM25 (có điều kiện)
-├── agent.py           # vòng lặp agent
-├── infer.py           # chạy trên một split, xuất submission.jsonl
-├── scripts/           # inspect_data.py, analyze_train.py, gold_hash.py, split.py
-├── eval/              # run.py, metrics.py, asr_eval.py
-├── tests/
-└── train+public_test/ # dữ liệu
+├── executor.py        # validate → call, vòng B2
+├── agent.py           # vòng lặp agent + ghi debug/<id>.json
+├── bm25.py            # BM25 tự cài (scope / few-shot)
+├── scripts/           # inspect_data, inspect_zaic, gold_hash, split, analyze_train,
+│                      # mine_policy, check_ref_alignment
+├── eval/              # run.py, metrics.py
+└── tests/             # 84 test (catalog, state_store, vi_norm, resolver, gate,
+                       # executor, metrics, llm, scope, agent)
 ```
 
 ---
@@ -140,43 +146,59 @@ lifemate/
 cd lifemate
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install numpy soundfile openai httpx pytest
+pip install pytest openai
 ```
 
-Biến môi trường:
+Biến môi trường (đặt trong `.env`, **không commit** — xem `.env.example`):
 
 ```bash
 export LIFEMATE_LLM_BASE_URL="https://<endpoint>/v1"
 export LIFEMATE_LLM_API_KEY="<key>"
-export LIFEMATE_LLM_MODEL="Qwen3-4B"
-
-export LIFEMATE_STT_BASE_URL="https://<endpoint>/v1"
-export LIFEMATE_STT_API_KEY="<key>"
-export LIFEMATE_STT_MODEL="<stt-model-id>"
+export LIFEMATE_LLM_MODEL="<model-id-có-tool-calling>"
+# tuỳ chọn
+export LIFEMATE_LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}'
+export LIFEMATE_DATA_ROOT="/abs/path/to/train+public_test"
 ```
 
 > Key **không** hard-code, **không** commit. `.env` đã bị `.gitignore` loại trừ.
 
 ---
 
-## Chạy
+## Chạy (bản MVP đã hiện thực)
+
+> Bản MVP theo [`EXECUTION-MVP.md`](EXECUTION-MVP.md): gọi **API** MiniMax, **không có STT**
+> (transcript lấy thẳng từ `label.audio_text`), **không** làm `infer.py`/`submission.jsonl`/Docker.
 
 ```bash
-# 1) Pha 0 — khảo sát dữ liệu, phân tích nhãn, tính gold hash, chia tập
-python scripts/inspect_data.py
-python scripts/analyze_train.py
-python scripts/gold_hash.py
-python scripts/split.py
+cd lifemate            # ← THƯ MỤC GỐC DỰ ÁN (…/1vin/lifemate), chứa train+public_test/ và lifemate/
 
-# 2) Đánh giá trên held-out (ASR vàng để đo trần của harness)
-python eval/run.py --split train --ids heldout_ids.txt --asr gold --out runs/gold
+# 0) M0 — khảo sát dữ liệu (không cần LLM)
+python lifemate/scripts/inspect_data.py         # reports/inspect.json, reports/history_format.md
+python lifemate/scripts/inspect_zaic.py         # reports/zaic_scoring.md
+python lifemate/scripts/gold_hash.py            # cache/gold_hash.json (1545 mẫu)
+python lifemate/scripts/split.py                # tune_ids.txt / heldout_ids.txt / dev300_ids.txt
+python lifemate/scripts/analyze_train.py        # ask / refuse / act / ref_sources
+python lifemate/scripts/mine_policy.py          # reports/policy_rules.json
+python lifemate/scripts/check_ref_alignment.py  # reports/ref_alignment.json (quyết định XREF_MODE)
 
-# 3) Đánh giá với ASR thật
-python eval/run.py --split train --ids heldout_ids.txt --asr real --out runs/real
+# 1) Test
+python -m pytest lifemate/tests -q
 
-# 4) Sinh submission cho public_test (chạy trong thư mục chứa public_test/)
-python infer.py
+# 2) Chạy harness + đo
+python lifemate/eval/run.py --split train --ids dev300_ids.txt --out runs/mvp1 --debug
+python lifemate/eval/run.py --split train --ids tune_ids.txt --tune-scope --out runs/mvp3_scope
+python lifemate/eval/run.py --split train --ids heldout_ids.txt --out runs/mvp3
+
+# 3) Ablation (mỗi lần đổi một cờ)
+python lifemate/eval/run.py --split train --ids dev300_ids.txt --set PREFETCH_MODE=deps --out runs/abl_prefetch
 ```
+
+Kết quả mỗi lần chạy nằm trong `runs/<tên>/`: `metrics.json` (F1-call 3 kiểu khớp +
+hash-match theo nhóm `act/ask/refuse` + theo app), `per_sample.jsonl`, `errors.json`
+(taxonomy lỗi), `submission.jsonl`, `overrides.json`; `debug/<id>.json` khi bật `--debug`.
+
+**Chưa có** (nằm ngoài phạm vi MVP): `asr.py`, `eval/asr_eval.py`, `infer.py`, file nộp bài,
+Docker, chạy `public_test`.
 
 `infer.py` bám theo template của ban tổ chức: mỗi mẫu trong `try/except` để **luôn có đúng một dòng** cho mỗi `id`; `AGENT` (ASR, LLM, catalog) khởi tạo **một lần** ở mức module.
 
@@ -205,14 +227,14 @@ Xem `sample_submission.jsonl` trong gói dữ liệu (3 dòng ví dụ: làm đ�
 
 ## Lộ trình milestone
 
-Chi tiết đầy đủ (từng module, thuật toán, test bắt buộc) trong [`Planning.md`](Planning.md) §5–§6.
+Chi tiết đầy đủ (từng module, thuật toán, test bắt buộc) trong [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) mục 6–§8.
 
 | M | Việc | Hoàn thành khi |
 |---|---|---|
 | **M0** | `inspect_data.py`, `analyze_train.py`, `gold_hash.py`, `split.py`; điền giá trị `[M0]` trong `config.py`; **chốt công thức chấm** (hoặc ghi rõ giả định) | Có `reports/*.json`; `gold_hash.json` đủ mọi mẫu; tạo `ToolEnv` lần hai không rò trạng thái; `metrics.py` xuất **cả hai** F1-call và hash |
 | **M1** | `catalog`, `prefetch`, `lexicon`, `llm`, `prompt`, `planner`, `gate`, `executor`, `agent` (chưa ASR, dùng `--asr gold`), `eval/run.py` | `tests/test_catalog.py`, `tests/test_gate.py` qua; `metrics.json` cho `--asr gold` — đây là **trần của harness** |
 | **M2** | `vi_norm.py` + test; `asr.py` (chế độ `api`/`gold`); `eval/asr_eval.py` | Bảng so sánh STT; chốt `STT_MODEL`/endpoint và `ASR_MODE` |
-| **M3** | `scope.py`, `resolver.py`, nối ASR thật, tune `SCOPE_LEX_THRESHOLD` | `metrics.json` chế độ `real`; chênh lệch với M1 cho biết phần mất do ASR; mọi mẫu `refuse` của held-out cho `tool_calls == []` |
+| **M3** | `scope.py`, `resolver.py`, nối ASR thật, tune `SCOPE_LEX_THRESHOLD` | `metrics.json` chế độ `api`; chênh lệch với M1 cho biết phần mất do ASR; mọi mẫu `refuse` của held-out cho `tool_calls == []` |
 | **M4** | Bật từng cờ ở §5.15 (độ sâu prefetch, few-shot BM25, hotwords, override, hỏi khi mơ hồ), mỗi lần một ablation | Mỗi cờ có bảng so sánh trên held-out (F1-call + hash); giữ cờ nào tăng điểm |
 | **M5** | Che/đổi tên tool trong catalog dev rồi chạy lại (kiểm tra tổng quát hoá); đo thời gian chạy cả split | Độ sụt điểm khi đổi tên tool được ghi nhận; `infer.py` xuất đủ một dòng cho mỗi `id` |
 | **M6** | Chạy `infer.py` trên `public_test`, kiểm tra `submission.jsonl` | File nộp qua kiểm tra định dạng |
@@ -239,7 +261,8 @@ Chi tiết đầy đủ (từng module, thuật toán, test bắt buộc) trong 
 
 | Tệp | Nội dung |
 |---|---|
-| [`Planning.md`](Planning.md) | Kiến trúc, quy ước chung, vấn đề công thức chấm (§1.1), chi tiết từng module (§5), lộ trình M0 → M6 (§6) |
-| [`Questions.md`](Questions.md) | Câu hỏi còn bỏ ngỏ cần BTC/đội trưởng trả lời: công thức chấm thật, lượt nộp (public vs Docker private), quyền dùng model lớn hơn, GPU, deadline, có được fine-tune không, cấu trúc repo cuối cùng |
+| [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md) | **Nguồn chuẩn cho mọi quy tắc hiện thực**: ràng buộc cứng, phạm vi IN/OUT theo mốc, dữ liệu đã verify, đặc tả từng module, định nghĩa metric, lộ trình M0 → M6 |
+| [`Planning.md`](Planning.md) | Kiến trúc và **lý do** của từng khối (tại sao có `scope` trước `prefetch`, tại sao gate là module quan trọng nhất…), các quyết định đã chốt và lý do |
+| [`Questions.md`](Questions.md) | Record các câu hỏi đã trả lời (công thức chấm, lượt nộp, model, môi trường) + 3 thông tin endpoint còn cần xác nhận |
 | [`train+public_test/README.md`](train+public_test/README.md) | Tài liệu gói dữ liệu chính thức của BTC: cấu trúc thư mục, định dạng `.jsonl`, catalog, `state.json`, cách chạy `zaic_tools`, tạo file nộp |
 | `train+public_test/<split>/zaic_tools/README.md` | Mô tả cách BTC chấm: replay `tool_calls` trên `state.json` ban đầu, so state với đáp án, tính F1 trên call |

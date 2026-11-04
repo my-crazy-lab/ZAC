@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+cache/
+runs/
+debug/
+logs/
+reports/
+submission.jsonl
+tune_ids.txt
+heldout_ids.txt
+dev300_ids.txt
+.pytest_cache/
+
+# Gói dữ liệu BTC: không được commit lại ra ngoài (xem train+public_test/README.md)
+train+public_test/
