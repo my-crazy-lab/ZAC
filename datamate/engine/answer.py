@@ -22,12 +22,12 @@ log = logging.getLogger(__name__)
 MAX_SPECS = 24
 
 METRIC_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("cancel_rate", ("ty le huy", "tiet le huy", "ti le huy")),
     ("import_avg_price", ("gia nhap binh quan", "gia nhap trung binh")),
     ("import_amount", ("tien nhap", "gia tri phieu nhap", "tong tien phieu nhap")),
     ("debt_age", ("tuoi no",)),
     ("debt", ("cong no", "con no", "khach no", "no phai tra")),
-    ("cancelled_orders", ("don huy", "so don huy", "trang thai huy", "bi huy")),
+    ("cancelled_orders", ("don huy", "so don huy", "trang thai huy", "bi huy",
+                          "ti le huy", "ty le huy", "tiet le huy")),
     ("stock_value", ("gia tri ton", "gia tri hang ton", "gia tri kho")),
     ("stock", ("ton kho", "con ton", "ton cuoi", "hang ton")),
     ("profit", ("loi nhuan", "loi gop")),
@@ -51,7 +51,7 @@ METRIC_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("cancel_rate", ("ty le huy", "tiet le huy")),
+    ("cancel_rate", ("ty le huy", "tiet le huy", "ti le huy")),
     ("group_share", ("ty trong", "chiem bao nhieu %", "ty le trong", "tỉ trọng")),
     ("compare_series", ("thang nao", "ngay nao", "ky nao")),
     ("boolean_check", ("tang lien tuc", "giam lien tuc", "co tang", "co giam",

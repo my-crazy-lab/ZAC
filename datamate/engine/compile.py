@@ -251,6 +251,11 @@ def compile_spec(spec: Spec, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
             else "NOT s.is_service"
 
     if spec.intent == "aggregate_total" or spec.intent == "cancel_rate":
+        # Tỉ lệ huỷ = 100 * đơn huỷ / mọi đơn trong kỳ (rulebook dòng 18).
+        if spec.output == "percent" and (spec.intent == "cancel_rate"
+                                         or m.name == "cancelled_orders"):
+            value_expr = ("100.0 * COUNT(*) FILTER (WHERE s.is_cancelled)"
+                          " / NULLIF(COUNT(*), 0)")
         sql = templates.T1.format(VALUE_EXPR=value_expr, SOURCE=source, TIME=time_pred,
                                    FILTER=filter_pred, DATE_COL=date_col, AS_OF=as_of_sql)
         post = None

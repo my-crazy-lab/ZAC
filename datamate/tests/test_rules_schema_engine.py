@@ -72,6 +72,27 @@ def test_validate_spec_rejects_single_window_compare_series():
     assert any("compare_series_needs_two_windows" in e for e in errs)
 
 
+def test_cancel_rate_keywords_map_to_intent_and_metric():
+    from engine.answer import keyword_intents, keyword_metrics
+    assert "cancel_rate" in keyword_intents("ti le huy don thang 6/2025 la nhieu %")
+    assert "cancelled_orders" in keyword_metrics("thang 5/2025 co bao nhieu % don bi huy")
+    assert "cancel_rate" not in keyword_metrics("ti le huy don")
+
+
+def test_cancel_rate_compiles_to_ratio():
+    from dtypes import Knobs
+    from engine.compile import compile_spec
+    ctx = _ctx()
+    ctx.views = {"v_orders_all"}
+    ctx.data_caps = {"order_date"}
+    spec = Spec(intent="cancel_rate", metric="cancelled_orders", subject="month",
+                filters=[], time=["main"], output="percent")
+    plan = compile_spec(spec, ctx, Knobs(),
+                        [_win("main", date(2025, 6, 1), date(2025, 6, 30))],
+                        date(2025, 6, 30))
+    assert "100.0" in plan.sql and "NULLIF(COUNT(*), 0)" in plan.sql
+
+
 def test_validate_spec_accepts_two_window_compare_series():
     from engine.compile import validate_spec
     spec = Spec(intent="compare_series", metric="revenue", subject="month",
