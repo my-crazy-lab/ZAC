@@ -36,6 +36,13 @@ LLM_TEMPERATURE = 0
 LLM_TIMEOUT, LLM_MAX_RETRIES = 60, 5
 LLM_MAX_TOKENS = 512
 
+# --- STT: shim OpenAI-compatible (M2, local Whisper Turbo) ---
+STT_BASE_URL = os.getenv("LIFEMATE_STT_BASE_URL", "")
+STT_API_KEY = os.getenv("LIFEMATE_STT_API_KEY", "")
+STT_MODEL = os.getenv("LIFEMATE_STT_MODEL", "whisper-1")
+STT_LANGUAGE = os.getenv("LIFEMATE_STT_LANGUAGE", "vi")
+STT_TIMEOUT = int(os.getenv("LIFEMATE_STT_TIMEOUT", "180") or 180)
+
 # --- Nhận diện thực thể ---
 ENTITY_MATCH_THRESHOLD = 0.80
 ENTITY_AMBIGUITY_GAP = 0.05

@@ -52,6 +52,11 @@ def _tools():
             one_of=[["track_id"], ["device"]],
         ),
         "unknown.app.tool": _tool("unknown.app.tool", "write", props={}, required=[]),
+        "notes.add": _tool(
+            "notes.add", "write",
+            props={"content": {"type": "string"}, "tags": {"type": "array"}},
+            required=["content"],
+        ),
     }
 
 
@@ -195,3 +200,9 @@ def test_13_empty_list_with_khong_ho_tro_is_refuse():
     res = _gate([], text="KHONG_HO_TRO")
     assert res.refuse is True
     assert res.ask is None
+
+
+def test_14_list_valued_args_do_not_crash_dedup():
+    res = _gate([Call("notes.add", {"content": "mua sua", "tags": ["sieu thi", "gap"]}),
+                 Call("notes.add", {"content": "mua sua", "tags": ["sieu thi", "gap"]})])
+    assert len(res.calls) == 1

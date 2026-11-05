@@ -9,6 +9,7 @@ from lifemate import config
 from lifemate.catalog import readers_for, resolve_tool_name
 from lifemate.resolver import match_entities
 from lifemate.datatypes import Ask, GateResult
+from lifemate.state_store import args_key
 from lifemate.vi_norm import strip_accents, tokenize_vi
 
 EMPTY_VALUES = (None, "", [], {})
@@ -327,7 +328,7 @@ def gate(raw_calls, text, ctx, tools, store, hints, env, state, transcript="", r
         args = coerce_args(tool, raw_args)
 
         if tool.kind == "read" and config.DROP_DUPLICATE_READS:
-            key = (name, tuple(sorted(args.items(), key=lambda kv: kv[0])))
+            key = (name, args_key(args))
             if store.has_called(name, args) or key in seen:
                 notes.append(f"drop_duplicate_read: {name}")
                 continue
@@ -369,7 +370,7 @@ def gate(raw_calls, text, ctx, tools, store, hints, env, state, transcript="", r
     unique_calls = []
     seen_full = set()
     for call in calls:
-        key = (call["name"], tuple(sorted((call["arguments"] or {}).items(), key=lambda kv: kv[0])))
+        key = (call["name"], args_key(call["arguments"] or {}))
         if key in seen_full:
             notes.append(f"drop_duplicate_call: {call['name']}")
             continue

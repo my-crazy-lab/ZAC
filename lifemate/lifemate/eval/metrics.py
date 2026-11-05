@@ -138,7 +138,7 @@ def classify_error(gold_calls, pred_calls, debug=None, fuzzy_params=None, except
     pred_calls = pred_calls or []
     if not pred_calls and gold_calls:
         return "scope_false_refuse"
-    if gold_calls and not pred_calls:
+    if not gold_calls and pred_calls:
         return "scope_missed_refuse"
     gold_ask = any(_is_ask(c) for c in gold_calls)
     pred_ask = any(_is_ask(c) for c in pred_calls)
