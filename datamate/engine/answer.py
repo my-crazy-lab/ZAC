@@ -68,8 +68,9 @@ INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 
 SUBJECT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("category", ("nhom hang",)),
-    ("customer", ("khach hang", "khach ")),
-    ("product", ("mat hang", "san pham", "hang hoa", "mon ", "sp ", "thuoc")),
+    ("customer", ("khach hang", "khach ", " ai")),
+    ("product", ("mat hang", "san pham", "hang hoa", "mon ", "sp ", "thuoc",
+                 " hang nao")),
     ("day", ("ngay ",)),
     ("month", ("thang ",)),
     ("channel", ("kenh ",)),
@@ -107,8 +108,11 @@ def keyword_subjects(q_nd: str, has_product_entity: bool,
         out.append("product")
     if has_customer_entity:
         out.append("customer")
+    # Đệm trắng hai đầu để từ khóa có dấu cách đầu (" ai", " hang nao")
+    # khớp cả đầu câu mà không dính "ngay mai"/"thang nao".
+    hay = f" {q_nd} "
     for subject, kws in SUBJECT_KEYWORDS:
-        if any(k in q_nd for k in kws) and subject not in out:
+        if any(k in q_nd or k in hay for k in kws) and subject not in out:
             out.append(subject)
     return out
 
