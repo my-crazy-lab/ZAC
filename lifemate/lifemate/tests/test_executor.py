@@ -136,6 +136,33 @@ def test_5_max_turns_stops_the_loop():
         config.MAX_TURNS = old
 
 
+def test_7_turn2_messages_carry_fresh_entity_hints():
+    from datetime import datetime
+    from lifemate.resolver import build_hints
+    from lifemate.datatypes import Hyp
+
+    transcript = "chuyển tiền cho Lan"
+    seen = []
+
+    class RecLLM(FakeLLM):
+        def generate(self, messages, tools=None, max_tokens=512, log=None):
+            seen.append(list(messages))
+            return super().generate(messages, tools, max_tokens, log=log)
+
+    llm = RecLLM([
+        ([Call("contacts.search", {"query": "Lan"})], ""),
+        ([], "XONG"),
+    ])
+    env = FakeEnv()
+    store = StateStore()
+    hints_fn = lambda: build_hints([Hyp(text=transcript, score=1.0)], store, datetime.now())
+    run_plan(env, llm, _tools(), [{"role": "user", "content": transcript}],
+             store, {}, transcript, hints_fn, Deadline(60), None,
+             state=ExecState(), ref_sources={})
+    turn2_user_texts = [m.get("content", "") for m in seen[1] if m.get("role") == "user"]
+    assert any("Gợi ý (cập nhật)" in t and "c_01" in t for t in turn2_user_texts)
+
+
 def test_6_repeated_write_dropped_unless_repeat_marker():
     tools = _tools()
     llm = FakeLLM([

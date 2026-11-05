@@ -32,11 +32,13 @@ def parse_args(argv=None):
     p.add_argument("--ids", required=True)
     p.add_argument("--out", default="runs/stt_bench")
     p.add_argument("--workers", type=int, default=2)
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
+    config.apply_overrides(args.set)
     config.SPLIT_DEFAULT = SPLIT
     items = R.load_items(SPLIT)
     ids = R.load_ids(args.ids)

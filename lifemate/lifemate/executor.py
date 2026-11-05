@@ -5,6 +5,7 @@ from lifemate import config
 from lifemate.gate import gate
 from lifemate.planner import plan
 from lifemate.datatypes import Call
+from lifemate.resolver import format_hints
 
 SILENT_NUDGE = ("Yêu cầu nằm trong phạm vi các công cụ. Hãy gọi công cụ phù hợp, "
                 "hoặc gọi sys.ask_missing_info nếu thiếu thông tin.")
@@ -133,6 +134,16 @@ def run_plan(env, llm, tools, messages, store, ctx, transcript, hints_fn, deadli
             messages = list(messages) + [
                 {"role": "assistant", "content": text or "", "tool_calls": tool_calls},
             ] + tool_messages
+            # M2b v2: gợi ý thực thể TƯƠI sau mỗi lượt đọc (store đã có dữ
+            # liệu mà prompt turn-1 chưa có). Chỉ entity (số/giờ không đổi).
+            if turn < config.MAX_TURNS and hints_fn is not None:
+                fresh = [h for h in (hints_fn() or []) if h.kind == "entity"]
+                if fresh:
+                    messages = list(messages) + [{
+                        "role": "user",
+                        "content": "Gợi ý (cập nhật): dùng đúng id dưới đây, không tự đặt ID.\n"
+                                   + format_hints(fresh),
+                    }]
 
         # 8) hoãn write chưa xác minh: thử lại sau khi đã đọc trong chính lượt này
         still_deferred = res.deferred

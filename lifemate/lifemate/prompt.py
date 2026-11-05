@@ -77,7 +77,8 @@ def build_messages(item, hyps, hist_texts, hints, store, fewshot_text=None, poli
     from lifemate.resolver import format_hints
     hint_text = format_hints(hints)
     if hint_text:
-        parts.append(f"Gợi ý:\n{hint_text}")
+        parts.append("Dùng đúng id trong mục Gợi ý cho tên đã khớp, không tự đặt ID.\n"
+                     f"Gợi ý:\n{hint_text}")
     snapshot = trim_snapshot(store, top_text, config.SNAPSHOT_MAX_CHARS)
     if snapshot and snapshot != "{}":
         parts.append(f"Dữ liệu ứng dụng:\n{snapshot}")
