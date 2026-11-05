@@ -47,7 +47,10 @@ def match_entities(text_tokens, entities, threshold: float) -> list:
                     if tok in STOPWORDS_VI:
                         continue
                     score, tier = token_sim(name_tokens[0], tok)
-                    if score >= 0.88 and (matched is None or score > matched[0]):
+                    # M2b: nhận cả khớp bậc-4 âm vị (0.85) — đúng kiểu nghe
+                    # sai của ASR (x/s, gi/d/r, tr/ch, l/n); bậc-5 vẫn loại
+                    # ở nhánh này để giữ precision.
+                    if score >= 0.85 and (matched is None or score > matched[0]):
                         matched = (score, tier, tok, False)
             else:
                 full = _best_window(text_tokens, name_tokens, threshold)
@@ -59,7 +62,7 @@ def match_entities(text_tokens, entities, threshold: float) -> list:
                         if tok in STOPWORDS_VI:
                             continue
                         score, tier = token_sim(last, tok)
-                        if score >= 0.88 and tier <= 3 and (matched is None or score > matched[0]):
+                        if score >= 0.85 and tier <= 4 and (matched is None or score > matched[0]):
                             matched = (score, tier, tok, True)
             if not matched:
                 continue

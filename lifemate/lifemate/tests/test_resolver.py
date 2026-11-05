@@ -68,6 +68,14 @@ def test_stopwords_never_match():
     assert hints == []
 
 
+def test_tier4_phonetic_single_token_matches_asr_confusion():
+    # ASR hay lẫn phụ âm đầu vùng miền (giữ → dữ): khớp bậc-4 vẫn phải gợi ý.
+    entities = _entities(("c_09", "contacts", ["giữ"]))
+    hints = match_entities(_tokens("đặt dữ luôn cái phòng ấy"), entities, 0.80)
+    assert [h.value for h in hints] == ["c_09"]
+    assert hints[0].extra["tier"] == 4
+
+
 def test_build_hints_and_format():
     store = StateStore()
     store.ingest("contacts.search", {"query": "Lan"}, {
