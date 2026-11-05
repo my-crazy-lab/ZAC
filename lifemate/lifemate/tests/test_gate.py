@@ -202,6 +202,41 @@ def test_13_empty_list_with_khong_ho_tro_is_refuse():
     assert res.ask is None
 
 
+def _hint(value, tier=1, collection="contacts", name="Lan", conf=1.0):
+    return Hint(kind="entity", span="lan", value=value, conf=conf,
+                extra={"collection": collection, "name": name, "tier": tier,
+                       "partial": False})
+
+
+def test_15_entity_override_replaces_verified_but_wrong_id():
+    store = _store_with_contacts()
+    old = config.ENABLE_ENTITY_OVERRIDE
+    config.ENABLE_ENTITY_OVERRIDE = True
+    try:
+        res = _gate([Call("banking.transfer", {"contact_id": "c_01", "amount": 100})],
+                    store, [_hint("c_02")])
+    finally:
+        config.ENABLE_ENTITY_OVERRIDE = old
+    assert res.calls
+    assert res.calls[0]["arguments"]["contact_id"] == "c_02"
+    assert any("override_entity" in n for n in res.notes)
+
+
+def test_16_entity_override_skips_ambiguous_and_disabled():
+    store = _store_with_contacts()
+    old = config.ENABLE_ENTITY_OVERRIDE
+    config.ENABLE_ENTITY_OVERRIDE = True
+    try:
+        res = _gate([Call("banking.transfer", {"contact_id": "c_01", "amount": 100})],
+                    store, [_hint("c_01"), _hint("c_02")])
+        assert res.calls[0]["arguments"]["contact_id"] == "c_01"
+    finally:
+        config.ENABLE_ENTITY_OVERRIDE = old
+    res2 = _gate([Call("banking.transfer", {"contact_id": "c_01", "amount": 100})],
+                 store, [_hint("c_02")])
+    assert res2.calls[0]["arguments"]["contact_id"] == "c_01"
+
+
 def test_14_list_valued_args_do_not_crash_dedup():
     res = _gate([Call("notes.add", {"content": "mua sua", "tags": ["sieu thi", "gap"]}),
                  Call("notes.add", {"content": "mua sua", "tags": ["sieu thi", "gap"]})])

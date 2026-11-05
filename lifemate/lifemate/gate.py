@@ -382,6 +382,10 @@ def gate(raw_calls, text, ctx, tools, store, hints, env, state, transcript="", r
     if config.ENABLE_OVERRIDE:
         calls = _apply_override(calls, hints, notes)
 
+    # --- ghi đè ID thực thể: hint duy nhất tin cậy cao thắng ID chưa xác minh ---
+    if config.ENABLE_ENTITY_OVERRIDE:
+        calls = _apply_entity_override(calls, hints, store, notes)
+
     # --- hỏi khi mơ hồ ---
     ask = gate_ask if gate_ask is not None else model_ask
     if config.ENABLE_AMBIG_ASK and calls:
@@ -426,6 +430,33 @@ def _apply_override(calls, hints, notes):
                 if new_value != value:
                     call["arguments"][pname] = new_value
                     notes.append(f"override_number {call['name']}.{pname} = {new_value}")
+    return calls
+
+
+def _apply_entity_override(calls, hints, store, notes):
+    """Hint gần như chắc chắn (bậc 1/2, đúng một ứng viên) thắng ID model chọn.
+
+    Bậc 1 (khớp tuyệt đối) / bậc 2 (lệch mỗi dấu thanh) là bằng chứng văn bản
+    mạnh: model chọn ID khác — kể cả ID có thật — gần như chắc chắn sai.
+    Mơ hồ (≥2 ứng viên) thì không chạm để tránh `gate_dropped_valid`.
+    """
+    for call in calls or []:
+        tool = call.get("_tool")
+        props = (tool.props if tool is not None else {}) or {}
+        for pname, value in list((call.get("arguments") or {}).items()):
+            if not isinstance(value, str) or not value:
+                continue
+            pspec = props.get(pname) or {}
+            xref = pspec.get("x-ref") if isinstance(pspec, dict) else None
+            if not xref or not isinstance(xref, str) or "." not in xref:
+                continue
+            coll = xref.split(".")[-1]
+            cands = [h for h in hints or []
+                     if h.kind == "entity" and h.extra.get("collection") == coll
+                     and h.extra.get("tier") in (1, 2)]
+            if len(cands) == 1 and cands[0].value != value:
+                call["arguments"][pname] = cands[0].value
+                notes.append(f"override_entity {call['name']}.{pname} = {cands[0].value}")
     return calls
 
 
