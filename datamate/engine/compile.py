@@ -91,14 +91,18 @@ def validate_spec(spec: Spec, ctx: BizContext, windows: list[TimeWindow],
         if allowed and spec.output not in allowed:
             errs.append(f"output_not_allowed:{spec.intent}/{spec.output}")
 
-    # 5. limit
+    # 5. chuỗi so sánh một cửa sổ là vô nghĩa (trả nhãn 'main' rác)
+    if spec.intent == "compare_series" and len(spec.time or []) < 2:
+        errs.append("compare_series_needs_two_windows")
+
+    # 6. limit
     if spec.intent in ("rank_top", "lookup_single"):
         if spec.limit is None:
             errs.append("limit_required")
         elif spec.intent == "lookup_single" and spec.limit != 1:
             errs.append("lookup_single_limit_must_be_1")
 
-    # 6. params
+    # 7. params
     for k in (spec.params or {}):
         if k not in PARAM_KEYS:
             errs.append(f"param_unknown:{k}")

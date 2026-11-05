@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ingest.clean import find_header_row, parse_date_series, parse_number_series
+from ingest.clean import find_header_row, forward_fill_group_cols, parse_date_series, parse_number_series
 from text.entity_linker import EntityIndex, link_entities
 from text.normalize import expand_abbrev, nd
 
@@ -70,3 +70,26 @@ def test_entity_linking_ignores_business_phrases():
     idx.add("product", "Bàn chải Colgate", "ban chai colgate")
     matches = link_entities("mat hang ban chay nhat thang 6 nam 2026", idx)
     assert not matches
+
+
+def test_forward_fill_merged_unique_order_ids():
+    # Ô gộp đơn nhiều dòng: mã đơn đơn nhất nhưng null thành vệt dài.
+    df = pd.DataFrame({
+        "Mã đơn": ["ORD1", None, None, "ORD2", None, None],
+        "Tên hàng": ["A", "B", "C", "D", "E", "F"],
+    })
+    out = forward_fill_group_cols(df)
+    assert out["Mã đơn"].tolist() == ["ORD1", "ORD1", "ORD1", "ORD2", "ORD2", "ORD2"]
+    assert out["Tên hàng"].tolist() == list("ABCDEF")
+
+
+def test_forward_fill_skips_scattered_optional_column():
+    # Null rải rác (khách vãng lai không mã) không phải ô gộp: phải tha.
+    df = pd.DataFrame({
+        "Mã đơn": ["O1", "O2", "O3", "O4", "O5", "O6", "O7"],
+        "Mã khách": ["K1", None, "K2", None, "K3", None, "K4"],
+        "Tên hàng": list("ABCDEFG"),
+    })
+    out = forward_fill_group_cols(df)
+    got = ["<na>" if pd.isna(v) else v for v in out["Mã khách"].tolist()]
+    assert got == ["K1", "<na>", "K2", "<na>", "K3", "<na>", "K4"]

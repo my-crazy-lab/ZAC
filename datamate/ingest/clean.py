@@ -317,8 +317,28 @@ def find_header_row(df_raw: pd.DataFrame, max_scan: int = 15) -> int:
     return -best[2] if best[0] >= 0 else 0
 
 
+def _avg_null_run_length(s: pd.Series) -> float:
+    """Độ dài vệt null trung bình. Ô gộp thành vệt dài (≥1.5); null rải rác ≈ 1."""
+    runs: list[int] = []
+    cur = 0
+    for v in s.isna().tolist():
+        if v:
+            cur += 1
+        elif cur:
+            runs.append(cur)
+            cur = 0
+    if cur:
+        runs.append(cur)
+    return sum(runs) / len(runs) if runs else 0.0
+
+
 def forward_fill_group_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Ô gộp: forward-fill **chỉ** cột nhóm (≥30% null và giá trị lặp lại)."""
+    """Ô gộp: forward-fill cột có null thành vệt (nhóm lặp HOẶC mã đơn nhất).
+
+    Điều kiện cũ (giá trị lặp ≥50%) bỏ sót mã đơn nhiều dòng vì mã nào cũng
+    khác nhau. Điều kiện vệt null (dài trung bình ≥1.5) bắt đúng ô gộp mà vẫn
+    tha cột thưa rải rác (vệt dài ≈ 1).
+    """
     if df is None or df.empty:
         return df
     out = df.copy()
@@ -332,7 +352,10 @@ def forward_fill_group_cols(df: pd.DataFrame) -> pd.DataFrame:
             continue
         # giá trị không null lặp lại?
         counts = vals.astype(str).value_counts()
-        if len(counts) > 1 and counts.iloc[0] / len(vals) < 0.5:
+        repeated = not (len(counts) > 1 and counts.iloc[0] / len(vals) < 0.5)
+        # ...hoặc null thành vệt dài (ô gộp khối)?
+        merged_runs = _avg_null_run_length(s) >= 1.5
+        if not (repeated or merged_runs):
             continue
         out[col] = s.ffill()
     return out

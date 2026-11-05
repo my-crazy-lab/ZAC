@@ -1,3 +1,6 @@
+# gói dữ liệu BTC (không commit lại ra ngoài)
+train/data/
+public_test/data/
 # artefact sinh ra khi chạy (không commit)
 survey/
 models/
@@ -9,3 +12,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 .DS_Store
+.env

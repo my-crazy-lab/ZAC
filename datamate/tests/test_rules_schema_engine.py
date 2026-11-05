@@ -50,6 +50,37 @@ def test_sandbox_allows_select():
     check_sql("SELECT 1 FROM v_orders WHERE order_date <= DATE '2026-01-01'")
 
 
+def _ctx():
+    from dtypes import BizContext
+    return BizContext(con=None, archetype="A_flat", data_caps={"line_amount"},
+                      views={"v_lines"}, date_min=date(2025, 1, 1),
+                      date_max=date(2026, 1, 1), schema_conf=1.0, flags={},
+                      status_invalid={}, value_dict={}, card="", entity_index=None,
+                      rules=None, invariants={})
+
+
+def _win(label, start, end):
+    from dtypes import TimeWindow
+    return TimeWindow(label=label, start=start, end=end)
+
+
+def test_validate_spec_rejects_single_window_compare_series():
+    from engine.compile import validate_spec
+    spec = Spec(intent="compare_series", metric="revenue", subject="day",
+                filters=[], time=["main"], output="date")
+    errs = validate_spec(spec, _ctx(), [_win("main", date(2025, 4, 1), date(2025, 4, 30))])
+    assert any("compare_series_needs_two_windows" in e for e in errs)
+
+
+def test_validate_spec_accepts_two_window_compare_series():
+    from engine.compile import validate_spec
+    spec = Spec(intent="compare_series", metric="revenue", subject="month",
+                filters=[], time=["p1", "p2"], output="string")
+    errs = validate_spec(spec, _ctx(), [_win("p1", date(2025, 3, 1), date(2025, 3, 31)),
+                                        _win("p2", date(2025, 4, 1), date(2025, 4, 30))])
+    assert not any("compare_series_needs_two_windows" in e for e in errs)
+
+
 def test_validate_spec_rejects_unknown_time_label():
     from dtypes import BizContext
     from engine.compile import validate_spec

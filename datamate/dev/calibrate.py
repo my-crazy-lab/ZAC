@@ -91,11 +91,12 @@ def _samples_from_run(run_dir: str):
     unmatched_path = os.path.join(run_dir, "unmatched.jsonl")
     split = "train"
     root, rules, cal, questions, answers = _load_split(split)
+    qmap: dict[str, Question] = {q.id: q for q in questions}
     ctxs: dict[str, object] = {}
     samples: list[tuple[dict[str, float], int]] = []
 
     def _feats(qid: str, metric=None, subject=None, intent=None, output=None):
-        q: Question = questions[qid]
+        q: Question = qmap[qid]
         biz = q.business_id
         if biz not in ctxs:
             ctxs[biz] = build_context(os.path.join(root, "data", biz), rules.knobs, rules, None)
