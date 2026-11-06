@@ -141,18 +141,35 @@ def _answer_one(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
         info["path"] = "unanswerable"
         return Answer(type=AnswerType.UNANSWERABLE.value, reason=check.reason), info
 
-    # 3-4. đường LLM
+    # 3-4. đường LLM: cũng qua cửa decide như đường xác định (đáp án
+    # đường này nhiễu hơn nhiều — nộp thẳng là lỗ).
     ent_names = [f"{e.kind}: {e.canonical_name}" for e in entities[:3]]
     ans, p1 = run_path1(q.text, ctx, rules.knobs, windows, ent_names, q.as_of, llm)
     info["path1"] = p1
     if ans is not None:
-        info["path"] = "path1_spec"
-        return ans, info
+        spec1 = p1.get("spec") or {}
+        dec = decide(q.text, ctx, windows, entities, candidate=ans,
+                     spec_metric=spec1.get("metric"), spec_subject=spec1.get("subject"),
+                     spec_intent=spec1.get("intent"), spec_output=spec1.get("output"),
+                     as_of=q.as_of)
+        info["decision"] = {"action": dec.action, "reason": dec.reason,
+                            "p_unanswerable": dec.p_unanswerable}
+        if dec.action == "answer" and dec.answer is not None:
+            info["path"] = "path1_spec"
+            return dec.answer, info
+        info["path"] = "path1_abstain"
+        return Answer(type=AnswerType.ABSTAIN.value), info
     ans, p2 = run_path2(q.text, ctx, rules.knobs, windows, q.as_of, llm)
     info["path2"] = p2
     if ans is not None:
-        info["path"] = "path2_sql"
-        return ans, info
+        dec = decide(q.text, ctx, windows, entities, candidate=ans, as_of=q.as_of)
+        info["decision"] = {"action": dec.action, "reason": dec.reason,
+                            "p_unanswerable": dec.p_unanswerable}
+        if dec.action == "answer" and dec.answer is not None:
+            info["path"] = "path2_sql"
+            return dec.answer, info
+        info["path"] = "path2_abstain"
+        return Answer(type=AnswerType.ABSTAIN.value), info
 
     # 5. escalate / abstain
     ans, esc = escalate(q.text, ctx, llm, windows)
