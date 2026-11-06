@@ -2,6 +2,7 @@
 train/data/
 public_test/data/
 # artefact sinh ra khi chạy (không commit)
+runs/
 survey/
 models/
 public_test/logs/

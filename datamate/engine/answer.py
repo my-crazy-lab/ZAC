@@ -142,9 +142,23 @@ def infer_output(q_nd: str, intent: str, metric: str, subject: str = "none",
     return "number"
 
 
+LIMIT_ENTITY_WORDS = ("khach", "mat hang", "mon", "san pham", "don hang",
+                      "don", "loai", "cua hang")
+
+
 def infer_limit(q_nd: str) -> int | None:
     m = re.search(r"top\s*(\d{1,2})", q_nd)
     if m:
+        return int(m.group(1))
+    m = re.search(r"liet ke\s*(\d{1,2})\b", q_nd)
+    if m:
+        return int(m.group(1))
+    # Số đếm tường minh ("3 mặt hàng", "cho tôi 5 khách") thắng "nhất".
+    # Từ thời gian (tháng/ngày/...) không bao giờ là limit; ngưỡng
+    # "từ X đơn trở lên" cũng không phải limit.
+    m = re.search(r"\b(\d{1,2})\s*(" + "|".join(LIMIT_ENTITY_WORDS) + r")\b",
+                  q_nd)
+    if m and not re.search(r"\d+\s*\w+(\s+\w+){0,2}\s*tro (len|xuong)", q_nd):
         return int(m.group(1))
     if "nhat" in q_nd or "gioi nhat" in q_nd:
         return 1
@@ -220,7 +234,7 @@ def candidate_specs(q_nd: str, windows: list[TimeWindow], entities: list[EntityM
                     if intent in ("rank_top", "lookup_single"):
                         limit = limit or (1 if intent == "lookup_single" else 3)
                     elif intent == "filter_list":
-                        limit = None
+                        pass  # giữ limit suy ra được (None = toàn bộ)
                     specs.append(Spec(
                         intent=intent, metric=metric, subject=subject,
                         filters=list(filters), time=[label] if label else [],
