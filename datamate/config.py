@@ -10,7 +10,7 @@ import os
 
 RANDOM_SEED = 20261103
 HOLDOUT_BUSINESSES = 6
-SCHEMA_VERSION = "v6"
+SCHEMA_VERSION = "v11"
 
 DATA_ROOT = os.environ.get("DATAMATE_DATA_ROOT", ".")
 SPLIT = os.environ.get("DATAMATE_SPLIT", "public_test")

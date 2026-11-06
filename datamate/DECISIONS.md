@@ -160,6 +160,37 @@ Test: 108 test, gồm `test_semantics.py`, `test_entity_linker.py`, và các ca 
 
 ---
 
+## I. Vòng 4 — ingest/map (mức nhảy lớn nhất)
+
+**Triệu chứng:** `biz_116` trả doanh thu 0 cho mọi kỳ; `biz_105`/`biz_117` mất ~50% `order_date`; `biz_122` có `v_lines` rỗng; `biz_130` thiếu nửa dữ liệu; 210 câu bị coi là "kỳ ngoài khoảng dữ liệu" (trước đó 14).
+
+**Bốn gốc lỗi, đều ở tầng đọc/map:**
+
+1. **Tên bảng trùng giữa các sheet.** Mọi sheet trong một file dùng chung tên file, nên `canonicalize` lấy sheet cuối đè sheet đầu (file báo cáo có cả sổ bán hàng, bảng giao hàng, danh mục). → Tên bảng phải kèm tên sheet.
+2. **Gộp bảng so sánh sai kiểu.** `other_cols = set(a2.values())` lấy tuple `(cột, điểm)` thay vì tên cột ⇒ overlap luôn 0 ⇒ chỉ dùng một bảng, bỏ các sheet tháng/file `_1`, `_2`. → Lấy đúng tên cột, và chỉ gộp khi cùng **tên logic** (tránh trộn bảng nhập với bảng bán).
+3. **Đuôi đơn vị bị hiểu là độ lớn.** `suf.startswith("t")` biến "2 thùng" thành 2 triệu, "1 bình" thành 1 tỷ. → Chỉ nhận độ lớn khi khớp đúng (`k`, `tr`, `trieu`…), thêm dạng "1tr440".
+4. **Ngày.** Cột trộn chuỗi ngày và số Excel (45689); ngày thiếu năm ("1/1") trong sheet tháng. → Nhận serial khi cột có cả chuỗi ngày; điền năm từ tên sheet.
+
+Thêm: bảng phẳng tự cung cấp cột đơn (tránh chọn dòng bán ở file tháng này, đơn ở file tháng khác ⇒ join rỗng), và ưu tiên bảng dòng bán có tiền hơn bảng giao hàng.
+
+**Kết quả v13** (đo đầy đủ, `dev/replay_det.py` + `dev/evaluate.py`):
+
+| PA | precision | đúng | sai | abstain | coverage |
+|---|---|---|---|---|---|
+| **+0.1297** | **62,3%** | **987** | **598** | 1415 | 52,8% |
+
+PA theo type: boolean +0,61 · date +0,58 · number +0,12 · percent +0,09 · string +0,08 · unanswerable +0,11 · list +0,02 · table 0.
+
+Kiểm chứng trực tiếp: `biz_116` Q4/2025 = 4.441.276.600, tháng 11/2025 = 1.423.804.300, Tôn Hoa Sen tháng 7/2025 = 9.435.000 — khớp đáp án (trước là 0). `biz_130` phủ 2025-02..2026-08; `biz_105` đến 2026-06; `biz_122` có 101.714 dòng bán.
+
+**Lượt v14** (thêm guard gộp bảng) đã dừng giữa chừng nên không có số chính thức. Đã đối chiếu: guard chỉ bỏ các gộp sai (`products`+bảng đơn vị, `lots`+chi tiết nhập); danh sách bảng bán giống hệt v13, nên kết quả kỳ vọng tương đương.
+
+**Còn lại (598 câu sai):** doanh thu/bộ lọc thiếu (nhóm hàng, hoạt chất, nhân viên) · đếm đơn 60 · trung bình đơn 37 · list xếp hạng 36 · đơn huỷ/tỉ lệ huỷ 33 · tách tồn theo đơn vị · số đợt giao chưa có metric. Shop yếu: `biz_117` 51, `biz_127` 44, `biz_111` 43, `biz_109` 41, `biz_123` 35.
+
+Test: 116 test pass, gồm các ca hồi quy cho số ("2 thùng", "1tr440"), ngày trộn serial, ngày thiếu năm, gộp bảng và thứ tự list.
+
+---
+
 ## Phụ lục — Dữ kiện đã khảo sát
 
 **Quy mô:** train 30 business / 3000 câu (number 1884, percent 578, list 193, date 145, string 88, unanswerable 70, boolean 23, table 19). Public test 14 business / 1000 câu, không có đáp án.

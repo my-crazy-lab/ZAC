@@ -214,6 +214,15 @@ def _split_camel(name: str) -> str:
     return nd(split_camel(name).replace("_", " "))
 
 
+def _same_logical_table(name_a: str, name_b: str) -> bool:
+    """Cùng một sổ nhưng khác sheet/file: so phần tên trước ``__`` sau khi bỏ số cuối."""
+    def key(name: str) -> str:
+        base = str(name).split("__")[0]
+        return re.sub(r"[_\-]?\d+$", "", base)
+
+    return bool(key(name_a)) and key(name_a) == key(name_b)
+
+
 def _file_stem(source: str) -> str:
     """Gốc tên file bỏ đuôi và hậu tố số: ``DanhSachHoaDonChiTiet_1.xlsx`` → ``danhsachhoadonchitiet``."""
     base = os.path.splitext(str(source))[0]
@@ -255,10 +264,31 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
         for ent, (fit, _assigned) in info["fits"].items():
             pref = _pref_score(ent, str(info["table"].source), str(info["table"].name))
             n_rows = int(len(info["table"].df))
-            key = (round(fit, 4) + 0.15 * pref, pref, n_rows)
+            bonus = 0.0
+            if ent == "lines":
+                # Ưu tiên bảng dòng bán **có tiền** hơn bảng giao hàng/nhật ký
+                # (cùng có số lượng + tên hàng) mà không loại bỏ shop chỉ có
+                # một bảng dòng thiếu cột tiền.
+                bonus = 0.35 if any(r in _assigned for r in
+                                    ("line_amount", "unit_price")) else 0.0
+            key = (round(fit, 4) + 0.15 * pref + bonus, pref, n_rows)
             cur = best_for_entity.get(ent)
             if cur is None or key > cur[0]:
                 best_for_entity[ent] = (key, info)
+
+    # Bảng phẳng: nếu bảng dòng bán **tự có** cột đơn (mã đơn + ngày/giờ) thì
+    # dùng nó làm bảng đơn luôn. Nếu không, mapper có thể chọn bảng dòng ở
+    # file tháng này và bảng đơn ở file tháng khác ⇒ join rỗng.
+    if "lines" in best_for_entity and "orders" in best_for_entity:
+        lines_info = best_for_entity["lines"][1]
+        if lines_info["table"].name != best_for_entity["orders"][1]["table"].name:
+            glob = lines_info["global"]
+            if "order_id" in glob and ("order_date" in glob or "order_ts" in glob):
+                if "orders" not in lines_info["fits"]:
+                    assigned = {r: v for r, v in glob.items()
+                                if r in ENTITY_ROLES["orders"]}
+                    lines_info["fits"]["orders"] = (1.0, assigned)
+                best_for_entity["orders"] = best_for_entity["lines"]
 
     entities: dict[str, dict[str, Any]] = {}
     for ent, (key, info) in sorted(best_for_entity.items()):
@@ -269,19 +299,24 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
         # hợp nhất các bảng cùng thực thể có **cùng tập cột** (vd chi tiết _1/_2)
         sig = set(cols.values())
         tables_same = [info["table"].name]
-        stem = _file_stem(str(info["table"].source))
         for other in per_table:
             if other["table"].name == info["table"].name:
                 continue
             _f2, a2 = other["fits"].get(ent, (0.0, {}))
             if _f2 < ENTITY_THRESHOLD:
                 continue
-            other_cols = set(a2.values())
-            same_stem = bool(stem) and _file_stem(str(other["table"].source)) == stem
+            # a2.values() là (cột, điểm) — phải lấy tên cột, không lấy tuple,
+            # nếu không overlap luôn 0 và các sheet tháng không bao giờ gộp.
+            other_cols = {c for c, _s in a2.values()}
             overlap = 0.0
             if other_cols:
                 overlap = len(sig & other_cols) / max(1, len(sig | other_cols))
-            if same_stem or overlap >= 0.8:
+            # Cùng file chưa đủ để coi là cùng bảng: một file báo cáo có thể
+            # chứa sổ bán hàng, bảng giao hàng, danh mục… với cột khác nhau.
+            # Chỉ gộp khi tập cột gần như trùng **và** cùng tên logic (các
+            # sheet tháng / file _1, _2 của cùng một sổ).
+            if overlap >= 0.8 and _same_logical_table(info["table"].name,
+                                                      other["table"].name):
                 tables_same.append(other["table"].name)
         entities[ent] = {
             "table": info["table"].name,

@@ -10,6 +10,34 @@ from text.entity_linker import EntityIndex, link_entities
 from text.normalize import expand_abbrev, nd
 
 
+def test_unit_words_are_not_magnitude_suffixes():
+    out = list(parse_number_series(pd.Series(["2 thùng", "1 bình", "1 bộ", "2 lít"])))
+    assert out == [2.0, 1.0, 1.0, 2.0]
+
+
+def test_vietnamese_shorthand_tr():
+    out = list(parse_number_series(pd.Series(["1tr440", "1tr4", "720.000đ"])))
+    assert out[0] == 1_440_000
+    assert out[1] == 1_400_000
+    assert out[2] == 720_000
+
+
+def test_mixed_excel_serial_and_text_dates():
+    out = parse_date_series(pd.Series(["01/02/2025", 45689]))
+    assert out[0] == __import__("datetime").date(2025, 2, 1)
+    assert out[1] == __import__("datetime").date(2025, 2, 1)
+
+
+def test_yearless_date_takes_sheet_year():
+    from schema.canon import _fill_yearless
+    raw = pd.Series(["1/1", "3/4"])
+    sheets = pd.Series(["Tháng 01-2025", "Tháng 04-2026"])
+    out = pd.Series([None, None], dtype="object")
+    filled = _fill_yearless(out, raw, sheets)
+    assert filled[0].year == 2025 and filled[0].month == 1 and filled[0].day == 1
+    assert filled[1].year == 2026 and filled[1].month == 4 and filled[1].day == 3
+
+
 def test_parse_datetime_keeps_hour():
     s = pd.Series(["2026-05-01 08:30:00", "01/05/2026 15:45", "2026-05-01"])
     out = parse_datetime_series(s)

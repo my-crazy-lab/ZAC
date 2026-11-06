@@ -152,8 +152,13 @@ def load_business(path: str) -> list[RawTable]:
                 log.warning("đọc xlsx lỗi %s: %s", fn, exc)
                 continue
             base = slugify(os.path.splitext(fn)[0])
+            multi = len(sheets) > 1
             for sheet_name, df_raw in sheets.items():
-                t = _table_from_df(base, fn, sheet_name, df_raw)
+                # Nhiều sheet trong một file phải có **tên bảng khác nhau**;
+                # nếu không, bảng cuối cùng sẽ đè bảng đầu trong canonicalize
+                # (một file báo cáo có cả sổ bán hàng và bảng giao hàng).
+                name = f"{base}__{slugify(str(sheet_name))}" if multi else base
+                t = _table_from_df(name, fn, sheet_name, df_raw)
                 if t:
                     tables.append(t)
         elif low.endswith(".sqlite") or low.endswith(".db"):

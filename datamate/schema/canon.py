@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -67,11 +68,38 @@ def _num(df: pd.DataFrame, cols: dict[str, str], role: str) -> pd.Series | None:
     return parse_number_series(s)
 
 
+_YEARLESS_RE = re.compile(r"^\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})\s*$")
+_SHEET_YEAR_RE = re.compile(r"(\d{4})")
+
+
+def _fill_yearless(out: pd.Series, raw: pd.Series, sheets: pd.Series) -> pd.Series:
+    """Điền ngày thiếu năm bằng năm ghi trong tên sheet (rulebook §8)."""
+    values = out.tolist()
+    raws = raw.tolist()
+    sheet_vals = sheets.tolist()
+    for i, current in enumerate(values):
+        if current is not None and current == current:
+            continue
+        m = _YEARLESS_RE.match(str(raws[i] or ""))
+        if m is None:
+            continue
+        my = _SHEET_YEAR_RE.search(str(sheet_vals[i] or ""))
+        if my is None:
+            continue
+        try:
+            values[i] = date(int(my.group(1)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+    return pd.Series(values, index=out.index, dtype="object")
+
+
 def _date(df: pd.DataFrame, cols: dict[str, str], role: str) -> pd.Series | None:
     s = _pick(df, cols, role)
     if s is None:
         return None
     out = parse_date_series(s)
+    if "__sheet" in df.columns:
+        out = _fill_yearless(out, s, df["__sheet"])
     # chuẩn hoá Timestamp → date (tránh so sánh date/Timestamp)
     return out.map(lambda v: v.date() if isinstance(v, pd.Timestamp) else v)
 

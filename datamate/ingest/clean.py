@@ -44,7 +44,7 @@ def nd(s: str) -> str:
 # ------------------------------------------------------------------- số học
 
 _NUM_CLEAN_RE = re.compile(r"[đ₫\s]|\bvnd\b", re.IGNORECASE)
-_SUFFIX_RE = re.compile(r"^\s*(-?[\d.,]+)\s*([a-zA-Zàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơớợỡợùúủũụưừứửữựỳýỷỹỵ]*)\s*$")
+_SUFFIX_RE = re.compile(r"^\s*(-?[\d.,]+)\s*([a-zA-Zàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơớợỡợùúủũụưừứửữựỳýỷỹỵ]*\d{0,4})\s*$")
 _THOUSANDS_DOT_RE = re.compile(r"^\d{1,3}(\.\d{3})+(,\d+)?$")
 _THOUSANDS_COMMA_RE = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$")
 
@@ -56,24 +56,31 @@ _SUFFIX_MULT = {
     "trieu": 1e6,
     "t": 1e6,
     "ty": 1e9,
-    "tỷ": 1e9,
     "b": 1e9,
-    "m": 1e6,
-    "l": 1e3,
 }
 
 
 def _strip_suffix(txt: str) -> tuple[str, float]:
+    """Tách số và **đơn vị độ lớn**.
+
+    Chỉ nhận đơn vị độ lớn khi khớp **đúng** ("k", "tr", "trieu"…); đơn vị
+    hàng hóa ("thùng", "bình", "bộ") không được nhân lên. Trước đây
+    ``startswith("t")`` biến "2 thùng" thành 2 triệu.
+    """
     m = _SUFFIX_RE.match(txt)
     if not m:
         return txt, 1.0
     num, suf = m.group(1), nd(m.group(2))
-    mult = 1.0
-    for key, val in _SUFFIX_MULT.items():
-        if suf.startswith(key):
-            mult = val
-            break
-    return num, mult
+    if suf in _SUFFIX_MULT:
+        return num, _SUFFIX_MULT[suf]
+    # Dạng "1tr440" = 1 triệu 440 nghìn; "1tr4" = 1,4 triệu.
+    m2 = re.fullmatch(r"(tr|trieu|ty|nghin|k)(\d{1,4})", suf)
+    if m2:
+        base = _SUFFIX_MULT[m2.group(1)]
+        digits = m2.group(2)
+        zeros = len(str(int(base))) - 1
+        return num, base + int(digits) * 10 ** max(0, zeros - len(digits))
+    return num, 1.0
 
 
 def parse_number_series(s: pd.Series) -> pd.Series:
@@ -200,6 +207,13 @@ def parse_date_series(s: pd.Series) -> pd.Series:
                     out.append(None)
             return pd.Series(out, index=s.index, dtype="object")
 
+    # Cột có cả chuỗi ngày ("01/02/2025") lẫn số Excel (45689) — số trong
+    # khoảng serial là ngày, không phải số lượng.
+    has_text_dates = any(
+        isinstance(v, str) and (_ISO_RE.match(v.strip()) or _VN_RE.match(v.strip())
+                                or _DMY_RE.match(v.strip()))
+        for v in vals)
+
     def _parse_one(v: Any) -> tuple[date | None, bool, int | None, int | None]:
         """Trả (ngày, có_giờ, phần_tử_1, phần_tử_2)."""
         if v is None:
@@ -207,6 +221,10 @@ def parse_date_series(s: pd.Series) -> pd.Series:
         if isinstance(v, (pd.Timestamp, datetime, date)):
             d = v.date() if isinstance(v, (pd.Timestamp, datetime)) else v
             return d, isinstance(v, (pd.Timestamp, datetime)), None, None
+        if (has_text_dates
+                and isinstance(v, (int, float, np.integer, np.floating))
+                and not isinstance(v, bool) and 20000 <= float(v) <= 60000):
+            return _excel_serial_to_date(float(v)), False, None, None
         txt = str(v).strip()
         if txt == "" or txt.lower() in ("nan", "none", "null"):
             return None, False, None, None
