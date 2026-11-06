@@ -97,10 +97,11 @@ Sai = −1, bỏ = 0. Chấm bằng `dev/evaluate.py --answers train/answers.jso
 | `dm_bench_gate` (`bd6ac65`) | −0.0113 | 0.417 | 2796 | đáp án path1/path2 phải qua cửa `decide()` (path2 đúng 0/30 khi nộp thẳng) |
 | `dm_bench_kindcheck` (`1b16eeb`) | −0.0037 | 0.470 | 2819 | luật cứng kiểm kiểu đáp án (`decide/candidate_check.py`): hỏi đếm mà đáp tiền, hỏi % mà đáp số thô, hỏi ngày mà đáp tên → bỏ |
 | `dm_bench_kindv2` (`574291f`) | **+0.0013** | 0.512 | 2834 | phân biệt đếm/tiền bằng cụm tiền mạnh + đơn vị đếm (ly/đĩa/cục/mặt hàng/mấy ngày); thêm `--resume` cho `predict.py` (cứu lượt đo rớt ở câu 143) |
+| `dm_bench_pctfix` (bước 1) | **+0.0050** | 0.548 | 2845 | chặn đáp án nhãn `percent` nhưng value là tiền thô (percent=360000); `infer_output` loại nồng độ "0,1%" trước khi gắn nhãn percent — câu otrivin về đúng `number` 58000 |
 
 Quyết định kèm theo: mọi đường trả lời (xác định, path1, path2, escalate) đều đi qua `decide()`; luật kiểm kiểu validate 0 câu đúng bị oan trên tập train trước khi đưa vào máy (17 test trong `tests/test_candidate_check.py`).
 
-Mục tiêu tiếp theo: nhóm `percent` còn âm (−0.0156, 578 câu) — máy tính sai tỉ lệ dù đúng kiểu.
+Mục tiêu tiếp theo (bước 2): tỉ lệ huỷ tính gần đúng nhưng lệch (vd 2.41 vs 2.08; 0.0 vs 1.21) — mổ định nghĩa tử/mẫu theo từng shop ở đường xác định.
 
 ---
 

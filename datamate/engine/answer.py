@@ -117,9 +117,17 @@ def keyword_subjects(q_nd: str, has_product_entity: bool,
     return out
 
 
+# "0,1%" trong tên hàng là nồng độ, không phải yêu cầu tỉ lệ.
+_RE_CONCENTRATION = re.compile(r"\d+[,.]\d*\s*%")
+
+
+def _asks_percent(q_nd: str) -> bool:
+    return "%" in _RE_CONCENTRATION.sub(" ", q_nd)
+
+
 def infer_output(q_nd: str, intent: str, metric: str, subject: str = "none",
                  limit: int | None = None) -> str:
-    if intent == "cancel_rate" or "%" in q_nd:
+    if intent == "cancel_rate" or _asks_percent(q_nd):
         return "percent"
     if intent == "rank_top":
         if limit == 1:
@@ -130,7 +138,7 @@ def infer_output(q_nd: str, intent: str, metric: str, subject: str = "none",
     if intent == "boolean_check":
         return "boolean"
     if intent == "compare_periods":
-        if "%" in q_nd or "phan tram" in q_nd:
+        if _asks_percent(q_nd) or "phan tram" in q_nd:
             return "percent"
         return "number"
     if intent == "compare_series":

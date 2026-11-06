@@ -33,8 +33,21 @@ _RE_COUNT_UNIT = re.compile(_COUNT_UNIT)
 _RE_COUNT_Q = re.compile(_COUNT_Q)
 _RE_COUNT_DAYS = re.compile(r"(mấy|bao nhiêu|bao nhiu|bao nhieu) ngày")
 
-_RE_PERCENT = re.compile(
-    r"%\s|phần trăm|tỉ lệ|ti le|ty le|bnhiu %|bao nhiu %|mấy %|may %|bao nhiêu %|chiếm")
+# "0,1%" trong tên hàng (otrivin 0,1%) là nồng độ, không phải câu hỏi tỉ lệ —
+# phải loại trước khi tìm dấu %.
+_RE_CONCENTRATION = re.compile(r"\d+[,.]\d*\s*%")
+_RE_RATE_WORD = re.compile(
+    r"phần trăm|phan tram|tỉ lệ|ti le|tỷ lệ|ty le|chiếm|chiem|đóng góp|dong gop")
+_RE_PERCENT_ASK = re.compile(
+    r"bnhiu|bao nhiu|bao nhiêu|bao nhieu|mấy|may |nhiêu|nhieu|tăng|tang|giảm|giam"
+    r"|hơn|hon|kém|kem|bằng|bang|chênh|chenh")
+
+
+def _looks_like_percent(t: str) -> bool:
+    if _RE_RATE_WORD.search(t):
+        return True
+    stripped = _RE_CONCENTRATION.sub(" ", t)
+    return "%" in stripped and _RE_PERCENT_ASK.search(stripped) is not None
 _RE_DATE = re.compile(
     r"ngày nào|ngay nao|hôm nào|hom nao|ngày bao nhiêu|ngay nao.*(cao|thấp) nhất")
 _RE_LIST = re.compile(
@@ -49,7 +62,7 @@ COUNT_MAX = 1_000_000       # đáp đếm là số nguyên nhỏ; tổng tiền
 def expect_kind(question: str) -> str:
     """Đoán kiểu đáp án câu hỏi đòi: percent | date | list | count | other."""
     t = (question or "").lower()
-    if _RE_PERCENT.search(t):
+    if _looks_like_percent(t):
         return "percent"
     if _RE_DATE.search(t):
         return "date"
@@ -77,8 +90,10 @@ def check_candidate(question: str, candidate: Any) -> tuple[bool, str]:
         return False, "date_pred_nondate_q"
     if ptype in ("list", "table") and kind != "list":
         return False, "list_pred_nonlist_q"
+    # Kể cả đáp án đã gắn nhãn "percent": engine/LLM đôi khi gắn nhãn đúng
+    # nhưng nhét số tiền thô vào value (vd percent=360000). Gold train max 391.
     if kind == "percent" and not (
-            ptype == "percent" or (ptype == "number" and num and abs(value) <= PERCENT_ABS_MAX)):
+            ptype in ("percent", "number") and num and abs(value) <= PERCENT_ABS_MAX):
         return False, "percent_q_badpred"
     if kind == "date" and ptype != "date":
         return False, "date_q_badpred"

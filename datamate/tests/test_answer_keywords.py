@@ -20,6 +20,20 @@ def test_hang_nao_maps_to_product_not_month():
     assert subs[0] == "product"
 
 
+def test_infer_output_concentration_is_not_percent():
+    from engine.answer import infer_output
+    q = nd("ngày 25/07/2025 cửa hàng bán otrivin 0,1% xịt mũi với đơn giá bnhiu một chai")
+    assert infer_output(q, "aggregate_total", "price", "product") == "number"
+
+
+def test_infer_output_real_percent_kept():
+    from engine.answer import infer_output
+    assert infer_output(nd("tỉ lệ huỷ đơn tháng 6 là nhiêu %"), "aggregate_total",
+                        "revenue", "month") == "percent"
+    assert infer_output(nd("doanh thu hơn hay kém cùng kỳ mấy %"), "compare_periods",
+                        "revenue", "month") == "percent"
+
+
 def test_infer_limit_explicit_count_beats_nhat():
     from engine.answer import infer_limit
     assert infer_limit("3 mat hang ban chay nhat tuan nay la nhung mat hang nao") == 3

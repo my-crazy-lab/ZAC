@@ -23,6 +23,25 @@ def test_percent_question_accepts_rate():
     assert check_candidate("tỉ lệ huỷ đơn tháng 6 là nhiêu %", _ans("number", 2.08))[0]
 
 
+def test_concentration_is_not_percent_question():
+    # "otrivin 0,1%" là nồng độ trong tên hàng; câu hỏi đơn giá (tiền)
+    assert check_candidate(
+        "ngày 25/07/2025 cửa hàng bán otrivin 0,1% xịt mũi với đơn giá bnhiu một chai",
+        _ans("number", 58000))[0]
+
+
+def test_percent_label_with_money_value_rejected():
+    # engine gắn nhãn percent nhưng value là số tiền thô → phải chặn
+    ok, reason = check_candidate(
+        "nhóm tiêu hóa đóng góp bnhiu % doanh thu cả cửa hàng",
+        _ans("percent", 360000.0))
+    assert not ok and reason == "percent_q_badpred"
+    ok, _ = check_candidate(
+        "dthu đơn bán qua điện thoại bằng bnhiu % tổng doanh thu",
+        _ans("percent", 397641500.0))
+    assert not ok
+
+
 def test_count_question_rejects_revenue():
     ok, reason = check_candidate("tháng 7 có bao nhiu đơn", _ans("number", 334591000.0))
     assert not ok and reason == "count_q_badpred"
