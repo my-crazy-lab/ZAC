@@ -102,6 +102,25 @@ def test_validate_spec_accepts_two_window_compare_series():
     assert not any("compare_series_needs_two_windows" in e for e in errs)
 
 
+def test_validate_spec_resolves_raw_month_label_to_window():
+    from engine.compile import validate_spec
+    spec = Spec(intent="compare_periods", metric="revenue", subject="none",
+                filters=[], time=["2026-05", "2026-04"], output="percent")
+    windows = [_win("main", date(2026, 5, 1), date(2026, 5, 31)),
+               _win("base", date(2026, 4, 1), date(2026, 4, 30))]
+    errs = validate_spec(spec, _ctx(), windows)
+    assert not any("time_label_unknown" in e for e in errs)
+    assert spec.time == ["main", "base"]
+
+
+def test_validate_spec_keeps_error_for_outside_label():
+    from engine.compile import validate_spec
+    spec = Spec(intent="compare_periods", metric="revenue", subject="none",
+                filters=[], time=["2030-01"], output="percent")
+    errs = validate_spec(spec, _ctx(), [_win("main", date(2026, 5, 1), date(2026, 5, 31))])
+    assert any("time_label_unknown" in e for e in errs)
+
+
 def test_validate_spec_rejects_unknown_time_label():
     from dtypes import BizContext
     from engine.compile import validate_spec

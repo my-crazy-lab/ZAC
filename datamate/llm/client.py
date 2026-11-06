@@ -187,15 +187,29 @@ class LLM:
 
     async def agenerate(self, prompts: list[str], *, json_schema: dict | None = None,
                         max_tokens: int = 512, thinking: bool = False) -> list[str]:
-        """Sinh cho nhiều prompt, trả kết quả **đúng thứ tự input**."""
+        """Sinh cho nhiều prompt, trả kết quả **đúng thứ tự input**.
+
+        Client HTTP chỉ sống trong một lượt gọi: giữ ``AsyncClient`` qua
+        nhiều ``asyncio.run`` khiến pool dính loop đã đóng ("Event loop is
+        closed") — lỗi chập chờn đã làm sập đường path1 ở benchmark.
+        """
         if not prompts:
             return []
-        sem = asyncio.Semaphore(self.concurrency)
-        tasks = [
-            self._one(i, p, json_schema, max_tokens, thinking, sem)
-            for i, p in enumerate(prompts)
-        ]
-        return list(await asyncio.gather(*tasks))
+        client = httpx.AsyncClient(timeout=self.timeout_s)
+        prev, self._client = self._client, client
+        try:
+            sem = asyncio.Semaphore(self.concurrency)
+            tasks = [
+                self._one(i, p, json_schema, max_tokens, thinking, sem)
+                for i, p in enumerate(prompts)
+            ]
+            return list(await asyncio.gather(*tasks))
+        finally:
+            self._client = prev
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001 - dọn dẹp, không che lỗi chính
+                pass
 
     def generate(self, prompts: list[str], **kw: Any) -> list[str]:
         """Bọc đồng bộ quanh ``asyncio.run``."""

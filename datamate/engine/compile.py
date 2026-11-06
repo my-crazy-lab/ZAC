@@ -6,7 +6,9 @@ tập đóng; mọi phép tính nằm ở đây.
 
 from __future__ import annotations
 
+import calendar as _calendar
 import logging
+import re as _re
 from datetime import date
 from dtypes import BizContext, CompiledPlan, EntityMatch, Knobs, Spec, TimeWindow
 from engine import templates
@@ -44,16 +46,51 @@ def _window_map(windows: list[TimeWindow]) -> dict[str, TimeWindow]:
     return out
 
 
+def _resolve_time_alias(label: str, windows: list[TimeWindow]) -> str | None:
+    """Nhãn thô dạng YYYY-MM / YYYY-MM-DD → nhãn cửa sổ chứa kỳ đó.
+
+    LLM hay viết nhãn tháng/ngày tự nhiên thay vì nhãn đã giải
+    ("main"/"base"). Ánh xạ chứa (containment), ưu tiên khớp khít.
+    """
+    m = _re.fullmatch(r"(\d{4})-(\d{2})", (label or "").strip())
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if 1 <= month <= 12:
+            start = date(year, month, 1)
+            end = date(year, month, _calendar.monthrange(year, month)[1])
+            exact = [w for w in windows if w.start == start and w.end == end]
+            if exact:
+                return exact[0].label
+            for w in windows:
+                if w.start <= start and w.end >= end:
+                    return w.label
+        return None
+    m = _re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", (label or "").strip())
+    if m:
+        try:
+            day = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+        for w in windows:
+            if w.start <= day <= w.end:
+                return w.label
+    return None
+
+
 def validate_spec(spec: Spec, ctx: BizContext, windows: list[TimeWindow],
                   entities: list[EntityMatch] | None = None) -> list[str]:
     """Trả danh sách lỗi (rỗng ⇒ hợp lệ)."""
     errs: list[str] = []
     wmap = _window_map(windows)
 
-    # 1. nhãn thời gian phải có trong danh sách
-    for label in spec.time:
+    # 1. nhãn thời gian phải có trong danh sách (kèm ánh xạ nhãn thô)
+    for i, label in enumerate(list(spec.time or [])):
         if label not in wmap:
-            errs.append(f"time_label_unknown:{label}")
+            alias = _resolve_time_alias(label, windows)
+            if alias is not None and alias in wmap:
+                spec.time[i] = alias
+            else:
+                errs.append(f"time_label_unknown:{label}")
 
     # 2. filters: giá trị phải thuộc danh sách ứng viên
     allowed_values = _allowed_filter_values(ctx, entities)
