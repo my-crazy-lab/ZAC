@@ -98,10 +98,11 @@ Sai = −1, bỏ = 0. Chấm bằng `dev/evaluate.py --answers train/answers.jso
 | `dm_bench_kindcheck` (`1b16eeb`) | −0.0037 | 0.470 | 2819 | luật cứng kiểm kiểu đáp án (`decide/candidate_check.py`): hỏi đếm mà đáp tiền, hỏi % mà đáp số thô, hỏi ngày mà đáp tên → bỏ |
 | `dm_bench_kindv2` (`574291f`) | **+0.0013** | 0.512 | 2834 | phân biệt đếm/tiền bằng cụm tiền mạnh + đơn vị đếm (ly/đĩa/cục/mặt hàng/mấy ngày); thêm `--resume` cho `predict.py` (cứu lượt đo rớt ở câu 143) |
 | `dm_bench_pctfix` (bước 1) | **+0.0050** | 0.548 | 2845 | chặn đáp án nhãn `percent` nhưng value là tiền thô (percent=360000); `infer_output` loại nồng độ "0,1%" trước khi gắn nhãn percent — câu otrivin về đúng `number` 58000 |
+| `dm_full_train` (full 3000) | **−0.0467** | 0.455 | 1452 | chạy hết train (~2.7h): coverage 51.6% (subset 300 câu/phần đầu file không đại diện — máy bỏ qua tới 95% ở đó). Lỗ lớn nhất: `number` −0.078 (1884 câu), `list` −0.249, `boolean` −0.348; `date` +0.42, `percent` +0.016. **843/844 câu sai từ đường xác định** (LLM đã bịt kín) — cửa `decide` để lọt đáp án tính sai nhưng tự tin |
 
 Quyết định kèm theo: mọi đường trả lời (xác định, path1, path2, escalate) đều đi qua `decide()`; luật kiểm kiểu validate 0 câu đúng bị oan trên tập train trước khi đưa vào máy (17 test trong `tests/test_candidate_check.py`).
 
-Mục tiêu tiếp theo (bước 2): tỉ lệ huỷ tính gần đúng nhưng lệch (vd 2.41 vs 2.08; 0.0 vs 1.21) — mổ định nghĩa tử/mẫu theo từng shop ở đường xác định.
+Mục tiêu tiếp theo (bước 2 sửa lại theo số full): 668 câu `number` đường xác định tính sai nhưng tự tin (sai cửa sổ/thực thể/chỉ tiêu). Hướng: kiểm chéo đáp án xác định (biên độ theo lịch sử, 2 spec đồng thuận) hoặc siết cửa `decide` với đáp số — tỉ lệ huỷ lệch (2.41 vs 2.08) nằm trong nhóm này.
 
 ---
 
