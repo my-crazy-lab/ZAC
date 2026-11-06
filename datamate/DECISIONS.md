@@ -87,6 +87,23 @@ Nếu muốn đổi một quyết định, sửa dòng `**Quyết định:**` t�
 
 ---
 
+## F. Nhật ký tăng điểm (benchmark PA300 train, n=3000 dòng chấm)
+
+Sai = −1, bỏ = 0. Chấm bằng `dev/evaluate.py --answers train/answers.jsonl`.
+
+| Lượt chạy | PA | Precision | Abstain | Đã làm gì |
+|---|---|---|---|---|
+| `dm_bench_client` (baseline) | −0.0213 | 0.363 | 2766 | sửa client HTTP (AsyncClient mỗi lần gọi) |
+| `dm_bench_gate` (`bd6ac65`) | −0.0113 | 0.417 | 2796 | đáp án path1/path2 phải qua cửa `decide()` (path2 đúng 0/30 khi nộp thẳng) |
+| `dm_bench_kindcheck` (`1b16eeb`) | −0.0037 | 0.470 | 2819 | luật cứng kiểm kiểu đáp án (`decide/candidate_check.py`): hỏi đếm mà đáp tiền, hỏi % mà đáp số thô, hỏi ngày mà đáp tên → bỏ |
+| `dm_bench_kindv2` (`574291f`) | **+0.0013** | 0.512 | 2834 | phân biệt đếm/tiền bằng cụm tiền mạnh + đơn vị đếm (ly/đĩa/cục/mặt hàng/mấy ngày); thêm `--resume` cho `predict.py` (cứu lượt đo rớt ở câu 143) |
+
+Quyết định kèm theo: mọi đường trả lời (xác định, path1, path2, escalate) đều đi qua `decide()`; luật kiểm kiểu validate 0 câu đúng bị oan trên tập train trước khi đưa vào máy (17 test trong `tests/test_candidate_check.py`).
+
+Mục tiêu tiếp theo: nhóm `percent` còn âm (−0.0156, 578 câu) — máy tính sai tỉ lệ dù đúng kiểu.
+
+---
+
 ## Phụ lục — Dữ kiện đã khảo sát
 
 **Quy mô:** train 30 business / 3000 câu (number 1884, percent 578, list 193, date 145, string 88, unanswerable 70, boolean 23, table 19). Public test 14 business / 1000 câu, không có đáp án.
