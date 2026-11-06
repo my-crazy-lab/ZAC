@@ -52,7 +52,9 @@ _RE_DATE = re.compile(
     r"ngày nào|ngay nao|hôm nào|hom nao|ngày bao nhiêu|ngay nao.*(cao|thấp) nhất")
 _RE_LIST = re.compile(
     r"top\s*\d|liệt kê|liet ke|kể (ra|tên)|mỗi tháng|moi thang|những gì|nhung gi"
-    r"|theo từng|từng tháng|cho tôi \d|cho toi \d")
+    r"|theo từng|từng tháng|cho tôi \d|cho toi \d"
+    r"|lần lượt|lan luot|mỗi bên|moi ben|mỗi loại|moi loai|theo thứ tự|theo thu tu"
+    r"|hai số|hai so")
 _RE_WEAK_MONEY = re.compile(_WEAK_MONEY)
 # Câu hỏi đúng/sai: kết thúc bằng "không?", "đúng không", "phải không".
 _RE_YES_NO = re.compile(

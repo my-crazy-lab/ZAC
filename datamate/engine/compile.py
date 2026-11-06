@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 INTENT_OUTPUTS: dict[str, set[str]] = {
     "aggregate_total": {"number", "percent"},
+    "multi_value": {"list"},
     "compare_periods": {"percent", "number", "list", "string"},
     "compare_series": {"boolean", "list", "string", "date"},
     "rank_top": {"list", "string", "table", "date"},
@@ -32,7 +33,8 @@ INTENT_OUTPUTS: dict[str, set[str]] = {
 }
 
 PARAM_KEYS = {"compare_mode", "check", "threshold", "expiring_days", "unit_name",
-              "debt_age_stat", "slow_and_high_stock", "extra_metrics"}
+              "debt_age_stat", "slow_and_high_stock", "extra_metrics",
+              "multi_field", "multi_values"}
 
 FILTER_FIELDS = {"product", "category", "customer", "channel", "pay_method",
                  "employee", "customer_group", "size", "unit_name"}
@@ -287,7 +289,22 @@ def compile_spec(spec: Spec, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
         subj_valid = f"({subj_valid}) AND NOT s.is_service" if subj_valid != "TRUE" \
             else "NOT s.is_service"
 
-    if spec.intent == "aggregate_total" or spec.intent == "cancel_rate":
+    multi_field = (spec.params or {}).get("multi_field")
+    multi_values = (spec.params or {}).get("multi_values") or []
+    if multi_field and multi_values and spec.intent in ("aggregate_total", "multi_value"):
+        # Mỗi giá trị một nhánh; list giữ đúng thứ tự câu hỏi nêu.
+        parts = []
+        for v in multi_values:
+            esc = str(v).replace("'", "''")
+            pred = f"s.{multi_field} IN ('{esc}')"
+            parts.append(
+                f"SELECT '{esc}' AS label, {value_expr} AS value FROM {source} s "
+                f"WHERE {time_pred} AND ({pred}) AND {filter_pred} "
+                f"AND s.{date_col} <= {as_of_sql}"
+            )
+        sql = " UNION ALL ".join(parts)
+        post = "series_values"
+    elif spec.intent == "aggregate_total" or spec.intent == "cancel_rate":
         # Tỉ lệ huỷ = 100 * đơn huỷ / mọi đơn trong kỳ (rulebook dòng 18).
         if spec.output == "percent" and (spec.intent == "cancel_rate"
                                          or m.name == "cancelled_orders"):

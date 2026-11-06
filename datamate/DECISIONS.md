@@ -143,6 +143,23 @@ Test: 108 test, gồm `test_semantics.py`, `test_entity_linker.py`, và các ca 
 
 ---
 
+## H. Vòng 3 — nhiều giá trị cùng chỉ tiêu (research-driven)
+
+**Đọc trước khi làm:** RoSL (EMNLP 2025) cho thấy tách câu hỏi ở **khâu schema linking** tăng recall liên kết; CQE và TAT-QA cho cách tách *giá trị + đơn vị* và các phép ghép số. Áp dụng cho câu "doanh thu Zalo OA **và** tại quầy": đây là hai phép tính cùng metric, không phải một bộ lọc.
+
+**Đã làm:**
+- `engine/answer.py`: `matched_values()` khớp cụm chính xác sau bỏ dấu, có từ đồng nghĩa **không thể nhầm** (`tai quay`, `dien thoai`, `tien mat`, `chuyen khoan`, `cod`, `vi dien tu`, `ghi no`), xếp theo thứ tự được nhắc; loại giá trị chung (`khác`, `hàng hóa`).
+- Nhiều giá trị của cùng một chiều → intent `multi_value`, compile thành UNION từng nhánh, formatter trả list đúng thứ tự.
+- Chặn "tổng A và B" bị hiểu thành list.
+
+**Kết quả v11:** PA **+0.0563** (v8 +0.0553), `list` −0.124 → −0.109. So với v8: +4 câu đúng, **0 câu đúng bị mất**, 9 câu trước bỏ nay trả sai (dữ liệu shop lệch, xem dưới).
+
+**Giới hạn phát hiện:** với nhiều shop, tổng doanh thu theo kênh trong `v_lines` thấp hơn đáp án ~25% (ví dụ biz_111 tháng 2/2026: `v_lines` 131,9tr, `v_orders_all` 137,5tr, đáp án 166,4tr). Đây là **thiếu dữ liệu ở tầng ingest/map**, không phải lỗi ghép list. Tương tự, câu "mấy hộp chẵn, mấy cái lẻ" (17 câu) chưa làm được vì `v_inventory` rỗng và `c_lots.lot_qty` bị map thành NULL ở nhiều shop.
+
+**Hướng tiếp có căn cứ:** (1) vá ingest/map cho tồn kho – lô – kênh của các shop lệch; (2) hai chỉ tiêu khác nhau trong một câu ("ghi nợ thêm" + "trả nợ") dùng `v_debt_events`; (3) chỉ mở `multi_value` khi dữ liệu shop tự nhất quán (tổng các nhánh ≈ tổng cả kỳ) để tránh 9 câu sai mới.
+
+---
+
 ## Phụ lục — Dữ kiện đã khảo sát
 
 **Quy mô:** train 30 business / 3000 câu (number 1884, percent 578, list 193, date 145, string 88, unanswerable 70, boolean 23, table 19). Public test 14 business / 1000 câu, không có đáp án.

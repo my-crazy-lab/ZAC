@@ -126,6 +126,39 @@ def test_formatter_maps_series_label_to_month():
     assert _label_to_date("p2", wins) == "2025-12"
 
 
+def test_category_value_filter_from_dictionary():
+    from engine.answer import filters_from
+    vd = {"category": ["Thực phẩm", "Đồ uống", "Khác"]}
+    f = filters_from([], vd, nd("nhóm thực phẩm tháng 7 bán được bao nhiêu tiền"))
+    assert {"field": "category", "op": "=", "values": ["Thực phẩm"]} in f
+
+
+def test_generic_category_value_not_filtered():
+    from engine.answer import filters_from
+    vd = {"category": ["Khác"]}
+    f = filters_from([], vd, nd("các loại khác bán được bao nhiêu"))
+    assert not any(x["field"] == "category" for x in f)
+
+
+def test_matched_values_uses_mention_order_and_synonyms():
+    from engine.answer import matched_values
+    q = nd("doanh thu các đơn bán qua Zalo OA và doanh thu các đơn bán tại quầy")
+    assert matched_values(q, ["phone", "store", "zalo_oa"]) == ["zalo_oa", "store"]
+
+
+def test_multi_value_question_builds_list_spec():
+    from datetime import date
+    from engine.answer import candidate_specs
+    from dtypes import TimeWindow
+    win = TimeWindow(label="main", start=date(2026, 7, 1), end=date(2026, 7, 31))
+    vd = {"channel": ["phone", "store", "zalo_oa"]}
+    q = expand_abbrev(nd("doanh thu các đơn bán qua Zalo OA và tại quầy tháng 7/2025"))
+    specs = candidate_specs(q, [win], [], None, vd)
+    assert specs and specs[0].output == "list"
+    assert specs[0].params.get("multi_field") == "channel"
+    assert specs[0].params.get("multi_values") == ["zalo_oa", "store"]
+
+
 def test_infer_check_direction():
     from engine.answer import infer_check
     assert infer_check(nd("doanh thu có tăng liên tục không")) == "series_increasing"

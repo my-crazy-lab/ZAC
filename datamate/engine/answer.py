@@ -216,6 +216,63 @@ def _in_text(key: str, q_nd: str) -> bool:
     return f" {key} " in f" {q_nd} "
 
 
+# Giá trị lọc quá chung — khớp sẽ thành nhiễu ("loại khác" không phải nhóm Khác).
+GENERIC_VALUES = {"khac", "khong", "khong xac dinh", "hang hoa", "tat ca", "toan bo",
+                  "khong ro"}
+
+# Cách nói tương ứng với giá trị lưu trong dữ liệu (đã bỏ dấu, '_' → ' ').
+# Chỉ những cụm **không thể nhầm**: "cửa hàng" là shop chứ không phải kênh
+# `store`; "nợ"/"vỉ" là nghiệp vụ khác chứ không phải ví điện tử/tên kênh.
+VALUE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "store": ("tai quay", "tai cua hang"),
+    "phone": ("dien thoai", "qua dien thoai", "ban qua dien thoai"),
+    "zalo oa": ("zalo", "zalo oa", "qua zalo"),
+    "online": ("online", "truc tuyen"),
+    "cash": ("tien mat",),
+    "transfer": ("chuyen khoan",),
+    "cod": ("cod", "giao hang thu tien"),
+    "ewallet": ("vi dien tu",),
+    "debt": ("ghi no",),
+}
+
+VALUE_FILTER_FIELDS = ("category", "channel", "pay_method", "customer_group", "employee")
+
+
+def _value_variants(value: str) -> list[str]:
+    key = nd(value).replace("_", " ")
+    out = [key] + list(VALUE_SYNONYMS.get(key, ()))
+    return [v for v in dict.fromkeys(out) if len(v) >= 2]
+
+
+def _mention_pos(q_nd: str, value: str) -> int | None:
+    best: int | None = None
+    for variant in _value_variants(value):
+        m = re.search(rf"(?<!\w){re.escape(variant)}(?!\w)", q_nd)
+        if m is not None:
+            best = m.start() if best is None else min(best, m.start())
+    return best
+
+
+def matched_values(q_nd: str, values: list[str]) -> list[str]:
+    """Giá trị có xuất hiện trong câu, xếp theo thứ tự được nhắc."""
+    hits: list[tuple[int, str]] = []
+    for v in values or []:
+        if nd(v).replace("_", " ") in GENERIC_VALUES:
+            continue
+        pos = _mention_pos(q_nd, v)
+        if pos is not None:
+            hits.append((pos, v))
+    hits.sort(key=lambda x: x[0])
+    return [v for _, v in hits]
+
+
+def _add_filter(filters: list[dict], field: str, value: str) -> None:
+    for f in filters:
+        if f["field"] == field and value in (f.get("values") or []):
+            return
+    filters.append({"field": field, "op": "=", "values": [value]})
+
+
 def _unit_filter(q_nd: str) -> list[dict]:
     m = re.search(r"bao nhieu\s+(\w+)", q_nd)
     if not m:
@@ -233,23 +290,18 @@ def filters_from(entities: list[EntityMatch], value_dict: dict[str, list[str]],
     for e in entities:
         val = e.code or nd(e.canonical_name)
         if e.kind == "product":
-            filters.append({"field": "product", "op": "=", "values": [val]})
+            _add_filter(filters, "product", val)
         elif e.kind == "customer":
-            filters.append({"field": "customer", "op": "=", "values": [val]})
+            _add_filter(filters, "customer", val)
         elif e.kind == "category":
-            filters.append({"field": "category", "op": "=", "values": [e.canonical_name]})
-    for field in ("channel", "pay_method", "customer_group", "employee"):
-        vals = value_dict.get(field) or []
-        for v in vals:
-            key = nd(v)
-            if len(key) >= 2 and _in_text(key, q_nd):
-                filters.append({"field": field, "op": "=", "values": [v]})
-                break
-        for v in vals:
-            syn = CHANNEL_SYNONYMS.get(nd(v))
-            if syn and _in_text(syn, q_nd):
-                filters.append({"field": field, "op": "=", "values": [v]})
-                break
+            _add_filter(filters, "category", e.canonical_name)
+    # Giá trị liệt kê: khớp **cụm chính xác** sau bỏ dấu, theo thứ tự được
+    # nhắc; lấy giá trị đầu tiên cho câu một giá trị (câu nhiều giá trị do
+    # `candidate_specs` tách thành list).
+    for field in VALUE_FILTER_FIELDS:
+        hits = matched_values(q_nd, value_dict.get(field) or [])
+        if hits:
+            _add_filter(filters, field, hits[0])
     return filters
 
 
@@ -292,6 +344,21 @@ def candidate_specs(q_nd: str, windows: list[TimeWindow], entities: list[EntityM
     subjects = subjects_for_intent(subjects, intents)
     filters = filters_from(entities, value_dict, q_nd)
 
+    # Câu nêu **nhiều giá trị của cùng một chiều** ("doanh thu Zalo OA và
+    # tại quầy", "COD với tiền mặt") là hai phép tính, không phải một bộ
+    # lọc gộp. Tách thành list theo thứ tự được nhắc.
+    multi_field: str | None = None
+    multi_values: list[str] = []
+    # "Tổng ... A và B" là một phép cộng, không phải hai đáp án.
+    if not re.search(r"\btong\b|tong cong|toan bo", q_nd):
+        for field in VALUE_FILTER_FIELDS:
+            hits = matched_values(q_nd, value_dict.get(field) or [])
+            if len(hits) >= 2:
+                multi_field, multi_values = field, hits
+                break
+    if multi_field:
+        filters = [f for f in filters if f["field"] != multi_field]
+
     # Intent so chuỗi cần **tất cả** cửa sổ trong một spec; các intent khác
     # chỉ dùng một cửa sổ mỗi spec.
     if intents[0] in ("compare_series", "boolean_check") and len(labels) >= 2:
@@ -320,8 +387,14 @@ def candidate_specs(q_nd: str, windows: list[TimeWindow], entities: list[EntityM
                         params["compare_mode"] = "pct"
                     elif intent == "boolean_check":
                         params["check"] = infer_check(q_nd)
+                    spec_intent = intent
+                    if multi_field and intent == "aggregate_total":
+                        spec_intent = "multi_value"
+                        out = "list"
+                        params["multi_field"] = multi_field
+                        params["multi_values"] = list(multi_values)
                     specs.append(Spec(
-                        intent=intent, metric=metric, subject=subject,
+                        intent=spec_intent, metric=metric, subject=subject,
                         filters=list(filters), time=list(tlabels),
                         having=having, order="desc", limit=limit, output=out,
                         params=params,
