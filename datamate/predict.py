@@ -56,7 +56,8 @@ def _read_rules(split_dir: str) -> Any:
 
 
 def run(split: str = "public_test", out_path: str | None = None,
-        limit: int | None = None, use_llm: bool = True) -> dict[str, Any]:
+        limit: int | None = None, use_llm: bool = True,
+        resume: bool = False) -> dict[str, Any]:
     root = os.path.join(config.DATA_ROOT, split)
     questions = load_questions(os.path.join(root, "questions.jsonl"))
     if limit:
@@ -76,8 +77,22 @@ def run(split: str = "public_test", out_path: str | None = None,
     os.makedirs(log_dir, exist_ok=True)
     t0 = time.time()
 
-    with open(out_path, "w", encoding="utf-8") as out_f, \
-            open(os.path.join(log_dir, "decisions.jsonl"), "w", encoding="utf-8") as log_f:
+    done: set[str] = set()
+    if resume and os.path.exists(out_path):
+        with open(out_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        done.add(str(json.loads(line)["id"]))
+                    except (ValueError, KeyError):
+                        pass
+        if done:
+            log.info("resume: bỏ qua %d câu đã có trong %s", len(done), out_path)
+
+    mode = "a" if resume and done else "w"
+    with open(out_path, mode, encoding="utf-8") as out_f, \
+            open(os.path.join(log_dir, "decisions.jsonl"), mode, encoding="utf-8") as log_f:
         for biz in sorted(by_biz):
             try:
                 ctx = build_context(os.path.join(root, "data", biz), rules.knobs, rules, llm)
@@ -89,6 +104,8 @@ def run(split: str = "public_test", out_path: str | None = None,
                     stats["error_business"] += 1
                 continue
             for q in sorted(by_biz[biz], key=lambda x: x.id):
+                if q.id in done:
+                    continue
                 ans, info = _answer_one(q, ctx, rules, cal, llm)
                 payload = {"id": q.id, **ans.to_json()}
                 out_f.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -193,11 +210,14 @@ def main() -> None:
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--no-llm", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="bỏ qua các câu đã có id trong file out (chạy tiếp lượt dở)")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO),
                         format="%(asctime)s %(levelname)s %(message)s")
-    summary = run(args.split, args.out, args.limit, use_llm=not args.no_llm)
+    summary = run(args.split, args.out, args.limit, use_llm=not args.no_llm,
+                  resume=args.resume)
     print(json.dumps(summary, ensure_ascii=False, indent=1))
 
 

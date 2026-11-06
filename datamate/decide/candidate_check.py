@@ -10,7 +10,28 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_MONEY_HINT = r"tiền|giá trị|doanh thu|dthu|thu về|giá |trung bình|tổng thu|chi phí|nợ"
+_STRONG_MONEY = (
+    r"trung bình|trung binh|bình quân|binh quan|giá trị|gia tri|thu về|thu ve"
+    r"|tổng thu|tong thu|tổng tiền|tong tien|tổng dthu|tong dthu"
+    r"|tổng doanh thu|tong doanh thu|tổng giá trị|tong gia tri|total bn"
+)
+_WEAK_MONEY = r"tiền|tien|doanh thu|dthu|revenue|giá |gia |nợ|chi phí|chi phi"
+
+# Đơn vị đếm được. "bao" vắng mặt (lẫn với "bao nhiêu"), "ngày" bắt riêng
+# bằng mẫu "mấy/bao nhiêu ngày" (không lẫn trạng ngữ "trong ngày hôm nay").
+_COUNT_UNIT = (
+    r"đơn|don|khách|khach|đợt|dot|\bkg\b|người|nguoi|sản phẩm|san pham|mặt hàng|mat hang"
+    r"|loại|loai|con nợ|\bly\b|\bcốc\b|coc|đĩa|dia|cục|cuc|chai|lon|\bthùng\b|thung"
+    r"|gói|goi|cuộn|cuon|\bhộp\b|hop|chiếc|chiec|\bcái\b|cai|\bmón\b|mon|kiện|kien"
+)
+_COUNT_Q = (
+    r"mấy|may |bao nhiêu|bao nhiu|bao nhieu|đếm|dem|\bsố\b|co bao|được mấy|đc mấy"
+    r"|ra bao|bán.*mấy"
+)
+_RE_STRONG_MONEY = re.compile(_STRONG_MONEY)
+_RE_COUNT_UNIT = re.compile(_COUNT_UNIT)
+_RE_COUNT_Q = re.compile(_COUNT_Q)
+_RE_COUNT_DAYS = re.compile(r"(mấy|bao nhiêu|bao nhiu|bao nhieu) ngày")
 
 _RE_PERCENT = re.compile(
     r"%\s|phần trăm|tỉ lệ|ti le|ty le|bnhiu %|bao nhiu %|mấy %|may %|bao nhiêu %|chiếm")
@@ -19,10 +40,7 @@ _RE_DATE = re.compile(
 _RE_LIST = re.compile(
     r"top\s*\d|liệt kê|liet ke|kể (ra|tên)|mỗi tháng|moi thang|những gì|nhung gi"
     r"|theo từng|từng tháng|cho tôi \d|cho toi \d")
-_RE_MONEY = re.compile(_MONEY_HINT)
-_RE_COUNT = re.compile(
-    r"đơn|don|khách|khach|đợt|dot|\bkg\b|người|nguoi|sản phẩm|san pham|loại|loai"
-    r"|con nợ|co bao|bao nhieu don|bao nhiu don")
+_RE_WEAK_MONEY = re.compile(_WEAK_MONEY)
 
 PERCENT_ABS_MAX = 10000.0   # gold train: max 391 — biên rất rộng, chỉ chặn số tiền lọt sang
 COUNT_MAX = 1_000_000       # đáp đếm là số nguyên nhỏ; tổng tiền hàng triệu không phải đáp đếm
@@ -37,10 +55,12 @@ def expect_kind(question: str) -> str:
         return "date"
     if _RE_LIST.search(t):
         return "list"
-    if _RE_MONEY.search(t):
+    if _RE_STRONG_MONEY.search(t):
         return "other"
-    if _RE_COUNT.search(t):
+    if (_RE_COUNT_UNIT.search(t) and _RE_COUNT_Q.search(t)) or _RE_COUNT_DAYS.search(t):
         return "count"
+    if _RE_WEAK_MONEY.search(t):
+        return "other"
     return "other"
 
 

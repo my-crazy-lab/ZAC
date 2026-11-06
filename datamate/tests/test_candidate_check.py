@@ -66,6 +66,46 @@ def test_single_best_is_not_list():
     assert expect_kind("tháng 5 hàng nào bán chạy nhất") == "other"
 
 
+def test_count_with_revenue_filter():
+    # "đơn có dthu từ 55k trở lên" là đếm đơn, đáp tổng tiền phải chặn
+    ok, reason = check_candidate(
+        "tháng 7 có bao nhiu đơn có dthu từ 55.000 trở lên", _ans("number", 334591000.0))
+    assert not ok and reason == "count_q_badpred"
+
+
+def test_count_days_with_revenue():
+    ok, _ = check_candidate(
+        "Tháng 6 có mấy ngày doanh thu đạt 9.800.000 trở lên?", _ans("number", 298394000.0))
+    assert not ok
+
+
+def test_count_units_ly_dia_cuc():
+    assert not check_candidate("bán được mấy ly Cà phê sữa (L)?", _ans("number", 4441000))[0]
+    assert not check_candidate("bán được mấy đĩa rau cần xào tỏi", _ans("number", 6809000))[0]
+    assert not check_candidate("bán ra bao nhiu cục xà bông", _ans("number", 2735000))[0]
+    assert check_candidate("bán được mấy ly Cà phê sữa (L)?", _ans("number", 176.0))[0]
+
+
+def test_count_slow_items():
+    ok, _ = check_candidate(
+        "từ 20/10 đến hết 26/10, bao nhiêu mặt hàng bị ế nhỉ?", _ans("number", 16560222900))
+    assert not ok
+
+
+def test_money_weak_form_not_count():
+    # "mặt hàng X thu về bao nhiêu tiền" là tiền — không được chặn
+    assert check_candidate(
+        "mặt hàng Thuốc lá Vinataba thu về bao nhiêu tiền",
+        _ans("number", 10006000))[0]
+
+
+def test_money_total_today_not_count():
+    assert check_candidate(
+        "tổng dthu trong ngày hôm nay là bao nhiêu", _ans("number", 39793500))[0]
+    assert check_candidate("Doanh thu tháng 4/2026 bao nhiêu?", _ans("number", 1380833500))[0]
+    assert check_candidate("revenue hôm nay là bao nhiêu", _ans("number", 11111900))[0]
+
+
 def test_unanswerable_string_not_blocked():
     ok, _ = check_candidate("cửa hàng có mấy khách ở đường Hai Bà Trưng",
                             _ans("number", 28021155100))
