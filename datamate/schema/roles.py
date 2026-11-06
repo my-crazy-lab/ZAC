@@ -81,8 +81,9 @@ ROLE_DEFS: list[RoleDef] = [
        "|thu tu|stt|so thu tu", "num", "lines"),
     _r("product_code", "ma hang hoa|ma san pham|ma hang|id sp|sku|ma sp|barcode"
        "|ma hh lien quan", "id", "lines"),
-    _r("product_name", "ten hang hoa|ten san pham|ten hang|ten mon|noi dung|mat hang"
-       "|ten hh|hang ban|ten mat hang|san pham|ten hoa", "str", "lines", True),
+    _r("product_name", "ten hang hoa|ten san pham|ten san pham ban|ten hang|ten mon"
+       "|noi dung|mat hang|ten hh|hang ban|ten mat hang|san pham|ten hoa"
+       "|ten sp|ten sp ban", "str", "lines", True),
     _r("qty", "so luong|sl", "num", "lines", True),
     _r("qty_base", "so luong da doi ra don vi co ban|so luong quy doi|quy ra don vi le"
        "|quy ra dv le|sl quy doi|so luong don vi co ban|so luong ban lay tu lo"

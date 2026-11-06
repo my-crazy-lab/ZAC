@@ -33,6 +33,37 @@ def test_thang_truoc_full_month():
     assert (w[0].start, w[0].end) == (date(2026, 2, 1), date(2026, 2, 28))
 
 
+def test_multi_month_list_keeps_every_month():
+    w = _resolve("doanh thu 3 thang 4/2026, 5/2026, 6/2026 co tang lien tuc khong")
+    months = {(x.start.year, x.start.month) for x in w}
+    assert {(2026, 4), (2026, 5), (2026, 6)} <= months
+
+
+def test_multi_month_list_with_repeated_year():
+    w = _resolve("thang 1/2026, thang 2/2026 va thang 3/2026 ghi lan luot")
+    months = {(x.start.year, x.start.month) for x in w}
+    assert {(2026, 1), (2026, 2), (2026, 3)} <= months
+
+
+def test_three_month_count_is_not_single_month():
+    # "3 thang 4/2026" (ba tháng, bắt đầu tháng 4) không được hiểu là chỉ tháng 4
+    w = _resolve("3 thang 4/2026")
+    assert len(w) == 1 and w[0].start.month == 4
+
+
+def test_shift_uses_period_not_month_to_date():
+    w = _resolve("ca chieu tuan truoc")
+    assert len(w) == 1 and w[0].kind == "shift" and w[0].shift == "chieu"
+    assert (w[0].start, w[0].end) == (date(2026, 2, 23), date(2026, 3, 1))
+
+
+def test_two_shifts_share_same_period():
+    w = _resolve("tuan truoc ca chieu so voi ca sang")
+    assert len(w) == 2
+    assert {(x.start, x.end) for x in w} == {(date(2026, 2, 23), date(2026, 3, 1))}
+    assert {x.shift for x in w} == {"chieu", "sang"}
+
+
 def test_thang_nay_vs_thang_truoc_truncates():
     w = _resolve("thang nay so voi thang truoc")
     base = [x for x in w if x.label == "base"][0]

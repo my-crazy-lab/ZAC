@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from ingest.clean import parse_date_series, parse_number_series
+from ingest.clean import parse_date_series, parse_datetime_series, parse_number_series
 from text.normalize import nd
 
 log = logging.getLogger(__name__)
@@ -74,6 +74,13 @@ def _date(df: pd.DataFrame, cols: dict[str, str], role: str) -> pd.Series | None
     out = parse_date_series(s)
     # chuẩn hoá Timestamp → date (tránh so sánh date/Timestamp)
     return out.map(lambda v: v.date() if isinstance(v, pd.Timestamp) else v)
+
+
+def _datetime(df: pd.DataFrame, cols: dict[str, str], role: str) -> pd.Series | None:
+    s = _pick(df, cols, role)
+    if s is None:
+        return None
+    return parse_datetime_series(s)
 
 
 def _text(df: pd.DataFrame, cols: dict[str, str], role: str) -> pd.Series | None:
@@ -280,7 +287,7 @@ def _build_orders(by_name: dict[str, Any], orders_info: dict[str, Any] | None,
         part["order_id"] = oid.reset_index(drop=True) if oid is not None else _empty(n)
         od = _date(df, cols, "order_date")
         part["order_date"] = od.reset_index(drop=True) if od is not None else _empty(n)
-        ots = _date(df, cols, "order_ts")
+        ots = _datetime(df, cols, "order_ts")
         part["order_ts"] = ots.reset_index(drop=True) if ots is not None else _empty(n)
         for role in ("customer_key", "customer_name", "status_raw", "channel",
                      "pay_method", "employee"):

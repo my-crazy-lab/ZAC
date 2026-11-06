@@ -4,9 +4,23 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ingest.clean import find_header_row, forward_fill_group_cols, parse_date_series, parse_number_series
+from ingest.clean import (find_header_row, forward_fill_group_cols, parse_date_series,
+                          parse_datetime_series, parse_number_series)
 from text.entity_linker import EntityIndex, link_entities
 from text.normalize import expand_abbrev, nd
+
+
+def test_parse_datetime_keeps_hour():
+    s = pd.Series(["2026-05-01 08:30:00", "01/05/2026 15:45", "2026-05-01"])
+    out = parse_datetime_series(s)
+    assert out[0].hour == 8 and out[0].minute == 30
+    assert out[1].hour == 15 and out[1].minute == 45
+    assert out[2].hour == 0
+
+
+def test_parse_datetime_excel_fraction():
+    out = parse_datetime_series(pd.Series([46000.5]))
+    assert out[0].hour == 12
 
 
 def test_parse_number_thousands_and_decimal():

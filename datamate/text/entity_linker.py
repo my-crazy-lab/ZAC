@@ -39,13 +39,43 @@ PHRASE_STOP = {
     "so sanh", "ban duoc", "bao nhieu tien", "gia ban", "gia von", "cong no",
     "ton kho", "het han", "mua bao nhieu", "ban bao nhieu", "gia tri don",
     "trung binh", "khach mua", "nhan vien", "mua hang", "nhap hang", "tra hang",
+    "da huy", "bi huy", "don huy", "tra hang", "hang tra", "don tra",
 }
+
+# Từ nghiệp vụ một âm tiết dễ trùng tên người/hàng ("Huỷ" ↔ khách "Huy").
+# Chỉ dùng làm bằng chứng khi đứng trong ngữ cảnh đối tượng (xem CONTEXT_WORDS).
+BUSINESS_SINGLE = {
+    "huy", "tra", "nhap", "xuat", "ton", "no", "ban", "mua", "giao", "don",
+    "hang", "khach", "thang", "ngay", "tuan", "quy", "nam", "gia", "tien",
+}
+CONTEXT_WORDS = {"khach", "kh", "ai", "nguoi", "mat", "hang", "mon", "san", "pham"}
+
+# Bằng chứng khớp token: exact sau bỏ dấu; fuzzy chỉ cho lỗi chính tả ở token đủ dài.
+FUZZY_MIN_LEN = 4
+FUZZY_MIN_RATIO = 90
+# Tên dài hơn span thì span phải phủ phần lớn tên (tránh "da huy" ↛ "dao bich huy").
+MIN_TARGET_COVERAGE = 0.6
+
+
+def _token_evidence(qt: str, tt: str) -> bool:
+    """Token có phải bằng chứng khớp không.
+
+    Exact sau bỏ dấu là bằng chứng chuẩn. Fuzzy chỉ dùng cho lỗi chính tả ở
+    token đủ dài — nếu không, "da" sẽ khớp "dao" và cụm nghiệp vụ biến thành
+    tên người.
+    """
+    if qt == tt:
+        return True
+    if len(qt) >= FUZZY_MIN_LEN and len(tt) >= FUZZY_MIN_LEN:
+        return fuzz.ratio(qt, tt) >= FUZZY_MIN_RATIO
+    return False
 
 
 def _align_score(query: str, target: str) -> float:
     """Khớp theo **cặp từ** (mỗi từ của span khớp ≤ 1 từ của tên).
 
-    Tránh việc span ngắn khớp nhầm tên dài ("ban chay" ↛ "ban chai colgate").
+    Trả 0 nếu span chỉ phủ một phần nhỏ của tên — tên dài mà span ngắn là
+    dấu hiệu khớp nhầm, không phải khớp tắt.
     """
     q_toks = query.split()
     t_toks = target.split()
@@ -56,18 +86,21 @@ def _align_score(query: str, target: str) -> float:
     used: set[int] = set()
     matches = 0
     for qt in q_toks:
-        best = None
-        best_i = None
         for i, tt in enumerate(t_toks):
             if i in used:
                 continue
-            r = fuzz.ratio(qt, tt)
-            if r >= 80 and (best is None or r > best):
-                best, best_i = r, i
-        if best is not None and best_i is not None:
-            used.add(best_i)
-            matches += 1
-    return 2.0 * matches / (len(q_toks) + len(t_toks))
+            if _token_evidence(qt, tt):
+                used.add(i)
+                matches += 1
+                break
+    if not matches:
+        return 0.0
+    precision = matches / len(q_toks)
+    recall = matches / len(t_toks)
+    score = 2.0 * precision * recall / (precision + recall)
+    if len(t_toks) > len(q_toks) and recall < MIN_TARGET_COVERAGE:
+        return 0.0
+    return score
 
 
 @dataclass
@@ -162,6 +195,12 @@ def link_entities(q_nd: str, index: EntityIndex, min_score: float = MIN_SCORE,
             span_nd = " ".join(span_tokens)
             if span_nd in PHRASE_STOP:
                 continue
+            # Từ nghiệp vụ một âm tiết chỉ được coi là thực thể khi có ngữ
+            # cảnh đối tượng quanh nó; nếu không "huỷ" sẽ khớp khách "Huy".
+            if size == 1 and span_nd in BUSINESS_SINGLE:
+                around = tokens[max(0, start - 2):start] + tokens[start + 1:start + 3]
+                if not any(t in CONTEXT_WORDS for t in around):
+                    continue
             best_per_kind: dict[str, tuple[float, str, str | None, str]] = {}
             for kind, name, code, nname, ncode in prepared:
                 sc = _score(span_nd, nname, name)

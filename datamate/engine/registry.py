@@ -19,6 +19,12 @@ class MetricDef:
     is_money: bool
     default_output: str
     template: str = "std"
+    # Miền dữ liệu gốc của metric — dùng để so khớp với chủ đề câu hỏi.
+    domain: str = "sales"  # sales | purchase | inventory | debt
+    # Metric chỉ có nghĩa khi gắn với một đối tượng cụ thể (giá một mặt
+    # hàng, tuổi nợ một khách). Không nhận ra đối tượng ⇒ không nên trả
+    # con số tổng của cả shop.
+    requires_entity: bool = False
 
 
 ALL_SUBJECTS = {"product", "category", "customer", "day", "week", "month",
@@ -73,46 +79,48 @@ REGISTRY: dict[str, MetricDef] = {
         name="stock", caps={"stock"}, source="v_inventory", date_col="inv_date",
         value_expr="SUM(s.inv_qty)",
         subjects={"product", "category"}, is_money=False, default_output="number",
-        template="point_stock"),
+        template="point_stock", domain="inventory"),
     "stock_value": MetricDef(
         name="stock_value", caps={"stock", "cost_catalog"}, source="v_inventory",
         date_col="inv_date", value_expr="SUM(s.inv_qty * p.unit_cost)",
         subjects={"category", "none"}, is_money=True, default_output="number",
-        template="point_stock"),
+        template="point_stock", domain="inventory"),
     "debt": MetricDef(
         name="debt", caps={"debt"}, source="v_debt_events", date_col="event_date",
         value_expr="SUM(s.delta)",
         subjects={"customer", "none"}, is_money=True, default_output="number",
-        template="point_debt"),
+        template="point_debt", domain="debt"),
     "debt_age": MetricDef(
         name="debt_age", caps={"debt", "payments"}, source="v_debt_events",
         date_col="event_date", value_expr="MAX(s.delta)",
         subjects={"customer"}, is_money=False, default_output="number",
-        template="point_debt"),
+        template="point_debt", domain="debt", requires_entity=True),
     "expiring": MetricDef(
         name="expiring", caps={"expiry", "stock"}, source="v_lots", date_col="expiry_date",
         value_expr="SUM(s.lot_qty)",
         subjects={"product"}, is_money=False, default_output="number",
-        template="expiring"),
+        template="expiring", domain="inventory"),
     "stock_split_unit": MetricDef(
         name="stock_split_unit", caps={"stock", "units"}, source="v_inventory",
         date_col="inv_date", value_expr="SUM(s.inv_qty)",
         subjects={"product"}, is_money=False, default_output="list",
-        template="point_stock"),
+        template="point_stock", domain="inventory", requires_entity=True),
     "price": MetricDef(
         name="price", caps={"line_amount"}, source="v_lines_all", date_col="order_date",
         value_expr="AVG(s.unit_price)",
-        subjects={"product", "none"}, is_money=True, default_output="number"),
+        subjects={"product", "none"}, is_money=True, default_output="number",
+        requires_entity=True),
     "import_amount": MetricDef(
         name="import_amount", caps={"imports"}, source="v_imports", date_col="import_date",
         value_expr="SUM(s.amount)",
         subjects={"product", "day", "week", "month", "supplier", "window"},
-        is_money=True, default_output="number"),
+        is_money=True, default_output="number", domain="purchase"),
     "import_avg_price": MetricDef(
         name="import_avg_price", caps={"imports"}, source="v_imports",
         date_col="import_date",
         value_expr=("SUM(s.amount) / NULLIF(SUM(COALESCE(s.qty_base, s.qty)), 0)"),
-        subjects={"product"}, is_money=True, default_output="number"),
+        subjects={"product"}, is_money=True, default_output="number",
+        domain="purchase", requires_entity=True),
 }
 
 

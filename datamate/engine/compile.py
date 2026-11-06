@@ -241,10 +241,10 @@ def _subject_exprs(subject: str | None) -> tuple[str, str, str]:
         code = "CAST(date_trunc('month', s.order_date) AS VARCHAR)"
         name = "CAST(date_trunc('month', s.order_date) AS VARCHAR)"
         valid = "TRUE"
-    elif sub in ("channel", "pay_method", "employee", "customer_group"):
+    elif sub in ("channel", "pay_method", "employee", "customer_group", "supplier"):
         code = f"COALESCE(s.{sub}, '')"
         name = f"COALESCE(s.{sub}, '')"
-        valid = "TRUE"
+        valid = f"s.{sub} IS NOT NULL"
     elif sub == "window":
         code = "s.order_date::VARCHAR"
         name = "s.order_date::VARCHAR"
@@ -344,7 +344,12 @@ def compile_spec(spec: Spec, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
         sql = " UNION ALL ".join(parts) if parts else templates.T1.format(
             VALUE_EXPR=value_expr, SOURCE=source, TIME=time_pred, FILTER=filter_pred,
             DATE_COL=date_col, AS_OF=as_of_sql)
-        post = "argmax_label" if spec.output in ("string", "date") else "series_increasing"
+        if spec.output == "list":
+            post = "series_values"
+        elif spec.output in ("string", "date"):
+            post = "argmax_label"
+        else:
+            post = "series_increasing"
     elif spec.intent == "boolean_check":
         parts = []
         wmap = _window_map(windows)

@@ -96,20 +96,48 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
 # ------------------------------------------------------------------- cues
 
 def _months_from_list(text: str) -> list[tuple[int, int]]:
+    """Các tháng trong câu liệt kê.
+
+    Hai dạng: ``3 thang 4, 5, 6/2026`` (một năm chung) và
+    ``thang 4/2026, 5/2026, 6/2026`` (năm theo từng tháng). Dạng đầu **phải
+    có từ hai tháng** — nếu không, "3 thang 4/2026" (ba tháng, bắt đầu tháng
+    4) bị hiểu nhầm thành chỉ tháng 4.
+    """
     months: list[tuple[int, int]] = []
-    m = re.search(r"(\d{1,2})\s*thang\s+(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*/\s*(\d{4})", text)
+    m = re.search(r"(\d{1,2})\s*thang\s+(\d{1,2}(?:\s*,\s*\d{1,2})+)\s*/\s*(\d{4})", text)
     if m:
         year = int(m.group(3))
         for part in re.split(r"\s*,\s*", m.group(2)):
             months.append((year, int(part)))
         return months
-    m = re.search(r"thang\s+(\d{1,2})\s*/\s*(\d{4})((?:\s*(?:,|va|,va)\s*\d{1,2}\s*/\s*\d{4})*)", text)
+    m = re.search(r"thang\s+(\d{1,2})\s*/\s*(\d{4})"
+                  r"((?:\s*(?:,|va|,va)\s*(?:thang\s+)?\d{1,2}\s*/\s*\d{4})*)", text)
     if m:
         year = int(m.group(2))
         months.append((year, int(m.group(1))))
         for mm in re.finditer(r"(\d{1,2})\s*/\s*(\d{4})", m.group(3) or ""):
             months.append((int(mm.group(2)), int(mm.group(1))))
-    return months
+        if len(months) >= 2:
+            return months
+    # Khoảng tháng "từ tháng A đến tháng B" chỉ mở thành từng tháng khi câu
+    # hỏi so sánh **từng tháng** — còn "tổng từ A đến B" vẫn là một kỳ.
+    m = re.search(r"(?:tu|từ)\s+thang\s+(\d{1,2})\s*/\s*(\d{4})\s+"
+                  r"(?:den|đến|toi|tới)\s+thang\s+(\d{1,2})\s*/\s*(\d{4})", text)
+    if m and re.search(r"thang sau|moi thang|tung thang|tang lien tuc|giam lien tuc"
+                       r"|luon (cao|thap) hon|cao hon thang truoc|thap hon thang truoc",
+                       text):
+        y, mo = int(m.group(2)), int(m.group(1))
+        ey, emo = int(m.group(4)), int(m.group(3))
+        cur = date(y, mo, 1)
+        end = date(ey, emo, 1)
+        while cur <= end and len(months) < 24:
+            months.append((cur.year, cur.month))
+            cur = _add_months(cur, 1)
+    uniq: list[tuple[int, int]] = []
+    for item in months:
+        if item not in uniq:
+            uniq.append(item)
+    return uniq
 
 
 def _c_thang_list(text: str) -> list[Cue]:
@@ -483,6 +511,28 @@ def resolve_time(text_nd: str, as_of: date, knobs: Knobs,
     cues = _scan(text)
     unresolved: list[str] = []
 
+    # Ca là **thuộc tính của kỳ**, không phải kỳ riêng. "Ca chiều tuần trước"
+    # là tuần trước + lọc giờ chiều; "ca chiều so với ca sáng" là hai ca trên
+    # cùng một kỳ. Trước đây ca tự dựng kỳ tháng-nay nên mọi câu theo ca đều
+    # sai khoảng ngày.
+    shift_cues = [c for c in cues if c.kind == "shift"]
+    if shift_cues:
+        period_cues = [c for c in cues if c.kind != "shift"]
+        if period_cues:
+            period = period_cues[0].build(as_of, knobs, cal)
+        else:
+            period = TimeWindow(label="main", start=_month_start(as_of), end=as_of)
+        out: list[TimeWindow] = []
+        for i, c in enumerate(shift_cues[:2]):
+            w = c.build(as_of, knobs, cal)
+            if w is None:
+                continue
+            out.append(TimeWindow(label="main" if i == 0 else "base",
+                                  start=period.start, end=period.end,
+                                  kind="shift", shift=w.shift))
+        if out:
+            return out, unresolved
+
     yoy = bool(YOY_RE.search(text))
     prev_month = bool(PREV_MONTH_RE.search(text))
     prev_week = bool(PREV_WEEK_RE.search(text))
@@ -519,9 +569,6 @@ def resolve_time(text_nd: str, as_of: date, knobs: Knobs,
                 label = "main" if i == 0 else f"p{i+1}"
                 out.append(TimeWindow(label=label, start=date(y, mo, 1),
                                       end=_month_end(date(y, mo, 1))))
-            y0, m0 = months[0]
-            out.append(TimeWindow(label="p1", start=date(y0, m0, 1),
-                                  end=_month_end(date(y0, m0, 1))))
             return out, unresolved
 
     windows: list[TimeWindow] = []

@@ -14,6 +14,7 @@ from dtypes import Answer, BizContext, EntityMatch, Knobs, Spec, TimeWindow
 from engine.compile import compile_spec, validate_spec
 from engine.executor import run_sql
 from engine.registry import get as get_metric
+from engine.semantics import metric_compatible, prefers_value, preferred_metrics
 from fmt.formatter import to_submission
 from text.normalize import nd
 
@@ -55,7 +56,8 @@ INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("group_share", ("ty trong", "chiem bao nhieu %", "ty le trong", "tỉ trọng")),
     ("compare_series", ("thang nao", "ngay nao", "ky nao")),
     ("boolean_check", ("tang lien tuc", "giam lien tuc", "co tang", "co giam",
-                       "lien tiep")),
+                       "lien tiep", "luon cao hon", "luon thap hon",
+                       "cao hon thang truoc", "thap hon thang truoc")),
     ("compare_periods", ("so voi", "tang bao nhieu", "giam bao nhieu", "tang %",
                          "giam %", "hieu chinh", "chay bao nhieu", "thay doi bao nhieu")),
     ("filter_list", ("liet ke", "danh sach", "nhung don", "nhung khach",
@@ -66,11 +68,16 @@ INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
                        "khach nao")),
 ]
 
+# "cửa hàng", "khách hàng", "nhóm hàng" không phải đối tượng mặt hàng.
+# Không loại thì câu nào có "cửa hàng" cũng bị xếp hạng theo mặt hàng.
+PRODUCT_EXCLUDE_RE = re.compile(r"\b(?:cua|khach|nhom|dong|loai|nha|don)\s+hang\b")
+
 SUBJECT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("category", ("nhom hang",)),
     ("customer", ("khach hang", "khach ", " ai")),
     ("product", ("mat hang", "san pham", "hang hoa", "mon ", "sp ", "thuoc",
-                 " hang nao")),
+                 " hang nao", "ban chay", "hot nhat", " hang ",
+                 "hang ban", "top ")),
     ("day", ("ngay ",)),
     ("month", ("thang ",)),
     ("channel", ("kenh ",)),
@@ -101,6 +108,19 @@ def keyword_intents(q_nd: str) -> list[str]:
     return out
 
 
+# Xếp hạng/liệt kê theo **đối tượng**, không theo mốc thời gian. "Tháng
+# 11/2025 top 5 hàng bán chạy" từng bị nhóm theo tháng nên trả về ngày.
+TEMPORAL_SUBJECTS = {"day", "week", "month"}
+RANKING_INTENTS = {"rank_top", "filter_list", "lookup_single"}
+
+
+def subjects_for_intent(subjects: list[str], intents: list[str]) -> list[str]:
+    if intents and intents[0] in RANKING_INTENTS:
+        entity_subjects = [s for s in subjects if s not in TEMPORAL_SUBJECTS]
+        return entity_subjects or subjects
+    return subjects
+
+
 def keyword_subjects(q_nd: str, has_product_entity: bool,
                      has_customer_entity: bool = False) -> list[str]:
     out: list[str] = []
@@ -111,8 +131,11 @@ def keyword_subjects(q_nd: str, has_product_entity: bool,
     # Đệm trắng hai đầu để từ khóa có dấu cách đầu (" ai", " hang nao")
     # khớp cả đầu câu mà không dính "ngay mai"/"thang nao".
     hay = f" {q_nd} "
+    q_product = PRODUCT_EXCLUDE_RE.sub(" ", q_nd)
     for subject, kws in SUBJECT_KEYWORDS:
-        if any(k in q_nd or k in hay for k in kws) and subject not in out:
+        hay_subject = f" {q_product} " if subject == "product" else hay
+        source = q_product if subject == "product" else q_nd
+        if any(k in source or k in hay_subject for k in kws) and subject not in out:
             out.append(subject)
     return out
 
@@ -142,7 +165,11 @@ def infer_output(q_nd: str, intent: str, metric: str, subject: str = "none",
             return "percent"
         return "number"
     if intent == "compare_series":
-        return "date" if "ngay nao" in q_nd else "string"
+        if re.search(r"lan luot|theo thu tu|moi thang|tung thang", q_nd):
+            return "list"
+        if subject in ("day", "month") or "ngay nao" in q_nd or "thang nao" in q_nd:
+            return "date"
+        return "string"
     if intent == "lookup_single":
         return "string"
     if intent == "group_share":
@@ -152,6 +179,16 @@ def infer_output(q_nd: str, intent: str, metric: str, subject: str = "none",
 
 LIMIT_ENTITY_WORDS = ("khach", "mat hang", "mon", "san pham", "don hang",
                       "don", "loai", "cua hang")
+
+
+def infer_check(q_nd: str) -> str:
+    """Chiều so sánh cho câu đúng/sai theo chuỗi kỳ."""
+    if re.search(r"giam|giảm|thap hon|thấp hơn|kem hon|kém hơn", q_nd):
+        return "series_decreasing"
+    if re.search(r"tang|tăng|cao hon|cao hơn|lon hon|lớn hơn|nhieu hon|nhiều hơn",
+                 q_nd):
+        return "series_increasing"
+    return "exists"
 
 
 def infer_limit(q_nd: str) -> int | None:
@@ -220,13 +257,48 @@ def candidate_specs(q_nd: str, windows: list[TimeWindow], entities: list[EntityM
                     having: dict | None,
                     value_dict: dict[str, list[str]]) -> list[Spec]:
     """Sinh danh sách spec ứng viên (đã lọc theo khả năng của metric)."""
-    metrics = keyword_metrics(q_nd) or ["revenue"]
+    has_entity = any(e.kind in ("product", "customer") for e in entities)
+    pref = preferred_metrics(q_nd)
+    raw_metrics = pref + [m for m in keyword_metrics(q_nd) if m not in pref]
+    metrics = [m for m in raw_metrics
+               if metric_compatible(q_nd, m, has_entity=has_entity)[0]]
+    # Không có tín hiệu nào ⇒ câu tổng quát, mặc định doanh thu. Có tín hiệu
+    # nhưng không metric nào dùng được (thiếu đối tượng/miền) ⇒ để trống:
+    # trả số doanh thu cho câu hỏi giá một món là sai chắc.
+    if not metrics and not raw_metrics:
+        metrics = ["revenue"]
     intents = keyword_intents(q_nd) or ["aggregate_total"]
+    labels = [w.label for w in windows]
+    # Câu liệt kê nhiều kỳ rồi hỏi giá trị từng kỳ ("tháng 1, 2, 3 ghi lần
+    # lượt") là chuỗi, không phải tổng. Nhận theo cấu trúc (≥3 cửa sổ + từ
+    # chỉ thứ tự), không theo mẫu câu cụ thể.
+    if (len(labels) >= 3
+            and re.search(r"lan luot|theo thu tu|moi thang|tung thang", q_nd)
+            and intents[0] == "aggregate_total"):
+        intents = ["compare_series"]
+    # Xếp hạng "nhiều tiền / chi tiêu / doanh thu" phải xếp theo metric tiền.
+    # Nếu không, "khách mua nhiều tiền nhất" chọn metric đếm khách (customers)
+    # và trả về rỗng/tên hàng.
+    if intents[0] in ("rank_top", "lookup_single") and prefers_value(q_nd):
+        money = [m for m in metrics if get_metric(m) and get_metric(m).is_money]
+        if money:
+            metrics = [money[0]] + [m for m in metrics if m != money[0]]
+        elif "revenue" not in metrics and metric_compatible(
+                q_nd, "revenue", has_entity=has_entity)[0]:
+            metrics = ["revenue"] + metrics
     subjects = keyword_subjects(q_nd,
                                 any(e.kind == "product" for e in entities),
                                 any(e.kind == "customer" for e in entities))
-    labels = [w.label for w in windows]
+    subjects = subjects_for_intent(subjects, intents)
     filters = filters_from(entities, value_dict, q_nd)
+
+    # Intent so chuỗi cần **tất cả** cửa sổ trong một spec; các intent khác
+    # chỉ dùng một cửa sổ mỗi spec.
+    if intents[0] in ("compare_series", "boolean_check") and len(labels) >= 2:
+        time_options: list[list[str]] = [labels[:8]]
+    else:
+        time_options = [[lab] for lab in labels[:2]] or [[]]
+
     specs: list[Spec] = []
     for intent in intents[:3]:
         for metric in metrics[:3]:
@@ -236,18 +308,23 @@ def candidate_specs(q_nd: str, windows: list[TimeWindow], entities: list[EntityM
             if not cand:
                 cand = ["none"]
             for subject in cand:
-                for label in (labels[:2] or [None]):
+                for tlabels in time_options:
                     limit = infer_limit(q_nd)
                     out = infer_output(q_nd, intent, metric, subject, limit)
                     if intent in ("rank_top", "lookup_single"):
                         limit = limit or (1 if intent == "lookup_single" else 3)
                     elif intent == "filter_list":
                         pass  # giữ limit suy ra được (None = toàn bộ)
+                    params: dict[str, Any] = {}
+                    if intent == "compare_periods":
+                        params["compare_mode"] = "pct"
+                    elif intent == "boolean_check":
+                        params["check"] = infer_check(q_nd)
                     specs.append(Spec(
                         intent=intent, metric=metric, subject=subject,
-                        filters=list(filters), time=[label] if label else [],
+                        filters=list(filters), time=list(tlabels),
                         having=having, order="desc", limit=limit, output=out,
-                        params={"compare_mode": "pct"} if intent == "compare_periods" else {},
+                        params=params,
                     ))
     return specs[:MAX_SPECS]
 

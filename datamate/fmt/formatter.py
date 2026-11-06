@@ -28,7 +28,31 @@ def _money(value: Decimal) -> int:
     return int(_round(value, "1"))
 
 
+def _label_to_date(label: Any, windows: list[TimeWindow] | None) -> str | None:
+    """Nhãn nội bộ ("main", "p2") → kỳ thật để trả đáp án ngày/tháng."""
+    if not windows:
+        return None
+    text = str(label)
+    win = next((w for w in windows if w.label == text), None)
+    if win is None:
+        if len(text) == 10 or len(text) == 7:
+            return text
+        return None
+    if (win.start.day == 1 and win.start.year == win.end.year
+            and win.start.month == win.end.month
+            and win.end.day == _month_days(win.end)):
+        return win.start.strftime("%Y-%m")
+    return win.start.isoformat()
+
+
+def _month_days(d) -> int:
+    import calendar as _cal
+    return _cal.monthrange(d.year, d.month)[1]
+
+
 def _is_month_question(spec: Spec | None, windows: list[TimeWindow] | None) -> bool:
+    if spec is not None and spec.subject in ("day", "week"):
+        return False
     if spec is not None and spec.subject == "month":
         return True
     if not windows:
@@ -78,9 +102,21 @@ def to_submission(plan: CompiledPlan, result: ExecResult, spec: Spec | None,
                     (post == "argmin_label" and val < best_val):
                 best_val, best_idx = val, i
         label = rows[best_idx][0]
-        if out_type == "date" and isinstance(label, str) and len(label) == 7:
-            return Answer(type=AnswerType.DATE.value, value=label)
+        if out_type == "date":
+            mapped = _label_to_date(label, windows)
+            if mapped is not None:
+                return Answer(type=AnswerType.DATE.value, value=mapped)
         return Answer(type=AnswerType.STRING.value, value=str(label))
+    if post == "series_values":
+        values: list[Any] = []
+        for r in rows:
+            v = _dec(r[-1]) if r else None
+            if v is None:
+                return Answer(type=AnswerType.ABSTAIN.value)
+            values.append(_money(v) if is_money else float(_round(v, "0.01")))
+        if not values:
+            return Answer(type=AnswerType.ABSTAIN.value)
+        return Answer(type=AnswerType.LIST.value, value=values)
     if post == "exists":
         return Answer(type=AnswerType.BOOLEAN.value, value=bool(rows))
     if post == "gt_threshold":

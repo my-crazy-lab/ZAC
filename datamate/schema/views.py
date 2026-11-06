@@ -246,7 +246,7 @@ def compute_data_caps(con: Any) -> set[str]:
     if has("v_orders", "order_debt_total"):
         caps.add("order_debt")
         caps.add("debt")
-    if has("v_imports", "import_amount"):
+    if has("v_imports", "amount") or has("v_imports", "import_amount"):
         caps.add("imports")
     if has("v_price_history", "ph_new"):
         caps.add("price_history")

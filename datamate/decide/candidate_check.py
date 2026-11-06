@@ -54,6 +54,10 @@ _RE_LIST = re.compile(
     r"top\s*\d|liệt kê|liet ke|kể (ra|tên)|mỗi tháng|moi thang|những gì|nhung gi"
     r"|theo từng|từng tháng|cho tôi \d|cho toi \d")
 _RE_WEAK_MONEY = re.compile(_WEAK_MONEY)
+# Câu hỏi đúng/sai: kết thúc bằng "không?", "đúng không", "phải không".
+_RE_YES_NO = re.compile(
+    r"(dung khong|đúng không|phai khong|phải không|hay khong|hay không"
+    r"|(khong|không|ko|hok|chua|chưa)\s*[?.!]*$)")
 
 PERCENT_ABS_MAX = 10000.0   # gold train: max 391 — biên rất rộng, chỉ chặn số tiền lọt sang
 COUNT_MAX = 1_000_000       # đáp đếm là số nguyên nhỏ; tổng tiền hàng triệu không phải đáp đếm
@@ -64,6 +68,8 @@ def expect_kind(question: str) -> str:
     t = (question or "").lower()
     if _looks_like_percent(t):
         return "percent"
+    if _RE_YES_NO.search(t.strip()):
+        return "boolean"
     if _RE_DATE.search(t):
         return "date"
     if _RE_LIST.search(t):
@@ -99,6 +105,8 @@ def check_candidate(question: str, candidate: Any) -> tuple[bool, str]:
         return False, "date_q_badpred"
     if kind == "list" and ptype not in ("list", "table"):
         return False, "list_q_badpred"
+    if kind == "boolean" and ptype != "boolean":
+        return False, "boolean_q_badpred"
     if kind == "count" and not (
             ptype == "number" and num and float(value).is_integer() and 0 <= value <= COUNT_MAX):
         return False, "count_q_badpred"

@@ -102,7 +102,44 @@ Sai = −1, bỏ = 0. Chấm bằng `dev/evaluate.py --answers train/answers.jso
 
 Quyết định kèm theo: mọi đường trả lời (xác định, path1, path2, escalate) đều đi qua `decide()`; luật kiểm kiểu validate 0 câu đúng bị oan trên tập train trước khi đưa vào máy (17 test trong `tests/test_candidate_check.py`).
 
-Mục tiêu tiếp theo (bước 2 sửa lại theo số full): 668 câu `number` đường xác định tính sai nhưng tự tin (sai cửa sổ/thực thể/chỉ tiêu). Hướng: kiểm chéo đáp án xác định (biên độ theo lịch sử, 2 spec đồng thuận) hoặc siết cửa `decide` với đáp số — tỉ lệ huỷ lệch (2.41 vs 2.08) nằm trong nhóm này.
+Mục tiêu tiếp theo (bước 2 sửa lại theo số full): 668 câu `number` đường xác định tính sai nhưng tự tin. Hướng đã chọn sau khi phân rã: **sửa schema linking** (metric/domain/thực thể/thời gian), không phải kiểm chéo đáp số. Chi tiết ở §G.
+
+---
+
+## G. Bước 2 — sửa theo số liệu full train (schema-linking guard)
+
+**Chẩn đoán lại.** 843/844 câu sai vẫn đến từ đường xác định, nhưng **không phải sai cửa sổ thời gian**: 609/667 câu số sai vẫn có window `main`. Lỗi nằm ở khâu chọn ngữ nghĩa (schema linking):
+
+| Nhóm lỗi | Số câu | Ví dụ |
+|---|---|---|
+| Câu hỏi phiếu nhập nhưng metric = doanh thu | 472/667 | "tổng giá trị các phiếu nhập hàng" → trả tiền bán |
+| Không nhận ra thực thể | 502/667 | "đã huỷ" bị khớp thành khách **Đào Bích Huy** (2/3 token mờ) |
+| Đếm đơn huỷ bằng metric đếm mọi đơn | 25 | "đếm số đơn đã huỷ" → 2775 thay vì 64 |
+| Ca sáng/chiều | 35 | `order_ts` bị cắt thành `date` nên lọc giờ luôn rỗng |
+| Xếp hạng top-N | 65 | "top 5 hàng bán chạy" nhóm theo tháng → trả `['2025-11-01']` |
+
+**Cách sửa — khai báo, không theo id/câu cụ thể:**
+
+1. **Entity linking** (`text/entity_linker.py`): bằng chứng token chặt — exact sau bỏ dấu; fuzzy chỉ cho token ≥4 ký tự; span phải phủ ≥60% tên. Từ nghiệp vụ một âm tiết ("huỷ", "trả", "nhập") chỉ link khi có ngữ cảnh đối tượng quanh nó.
+2. **Ngữ nghĩa metric** (`engine/semantics.py`): mỗi metric khai báo `domain` (sales/purchase/inventory/debt) và `requires_entity`; câu hỏi có tín hiệu miền/trạng thái. `candidate_specs` ưu tiên metric đúng miền; `decide()` bỏ khi spec lệch miền, và bỏ metric cần đối tượng khi chưa nhận ra đối tượng.
+3. **Chủ thể xếp hạng**: bỏ mốc thời gian khỏi rank/list; loại "cửa hàng/khách hàng/đơn hàng" khỏi tín hiệu mặt hàng; xếp hạng "nhiều tiền" ưu tiên metric tiền.
+4. **Thời gian** (`timeutil/resolver.py`, `ingest/clean.py`): ca là **thuộc tính của kỳ**; danh sách nhiều tháng giữ đủ tháng, không lặp tháng đầu; khoảng tháng chỉ mở thành chuỗi khi câu hỏi so sánh từng tháng; `order_ts` giữ phần giờ.
+5. **Định dạng** (`fmt/formatter.py`, `engine/compile.py`): nhãn kỳ nội bộ ("p2") đổi về tháng/ngày thật; câu đúng/sai phải trả `boolean`; câu liệt kê nhiều kỳ trả list giá trị theo thứ tự.
+
+**Đo bằng** `dev/replay_det.py` — chạy đúng đường xác định (không LLM), chấm bằng `fmt.compare.is_correct`:
+
+| Bản | PA | coverage | precision | đúng | sai | ghi chú |
+|---|---|---|---|---|---|---|
+| full train gốc nộp | −0.0467 | 0.516 | 0.455 | 694 | 854 | có cả path LLM |
+| v1 | +0.0223 | 0.526 | 0.521 | 823 | 756 | entity + semantics + guard |
+| v7 | +0.0487 | 0.528 | 0.546 | 865 | 719 | thêm thời gian, chủ thể, định dạng |
+| **v8** | **+0.0553** | **0.530** | **0.552** | **878** | **712** | thêm chiều so sánh đúng/sai |
+
+PA theo type ở v8: `boolean` +0.61 (từ −0.35), `date` +0.40, `number` +0.041, `percent` +0.057, `string` +0.011, `list` −0.124, `unanswerable` +0.10.
+
+Test: 108 test, gồm `test_semantics.py`, `test_entity_linker.py`, và các ca hồi quy cho thời gian/định dạng.
+
+**Bài học kiến trúc:** với dạng bài này, câu trả lời sai nhưng "trông hợp lý" không chặn được bằng kiểm kiểu đáp án. Phải kiểm ở **khâu chọn nguồn dữ liệu** (schema linking) và ở **tính toàn vẹn của kỳ** (ca, chuỗi tháng, giờ), rồi mới đến bộ quyết định.
 
 ---
 

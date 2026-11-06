@@ -141,6 +141,40 @@ def _excel_serial_to_date(v: float) -> date:
     return EXCEL_EPOCH + timedelta(days=float(v))
 
 
+_TIME_IN_TEXT_RE = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
+
+
+def parse_datetime_series(s: pd.Series) -> pd.Series:
+    """Parse cột thời điểm, **giữ phần giờ** (order_ts, giờ thu tiền).
+
+    ``parse_date_series`` cố ý trả ``date``; dùng nó cho cột thời điểm sẽ
+    làm mọi đơn rơi vào 00:00 và phép lọc ca sáng/chiều luôn rỗng.
+    """
+    if s is None:
+        return pd.Series(dtype="object")
+    dates = parse_date_series(s)
+    out: list[datetime | None] = []
+    for raw, d in zip(s.tolist(), dates.tolist()):
+        if d is None or (isinstance(d, float) and d != d) or pd.isna(d):
+            out.append(None)
+            continue
+        hh = mm = ss = 0
+        if isinstance(raw, (int, float, np.integer, np.floating)) and not isinstance(raw, bool):
+            frac = float(raw) - int(float(raw))
+            if 0 < frac < 1:
+                total = round(frac * 86400)
+                hh, rem = divmod(total, 3600)
+                mm, ss = divmod(rem, 60)
+        else:
+            m = _TIME_IN_TEXT_RE.search(str(raw))
+            if m:
+                hh, mm = int(m.group(1)), int(m.group(2))
+                ss = int(m.group(3) or 0)
+        out.append(datetime(int(d.year), int(d.month), int(d.day),
+                            int(hh), int(mm), int(ss)))
+    return pd.Series(out, index=s.index, dtype="object")
+
+
 def parse_date_series(s: pd.Series) -> pd.Series:
     """Parse cột ngày; quyết định dd/mm vs mm/dd theo **cả cột**."""
     if s is None:

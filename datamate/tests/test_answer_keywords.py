@@ -58,3 +58,86 @@ def test_thang_nao_does_not_trigger_product():
 def test_ngay_mai_does_not_trigger_customer():
     subs = _subjects("ngay mai cua hang co mo cua khong?")
     assert "customer" not in subs
+
+
+def _metrics(question: str) -> list[str]:
+    from engine.answer import keyword_metrics
+    from engine.semantics import preferred_metrics
+    q = expand_abbrev(nd(question.lower()))
+    pref = preferred_metrics(q)
+    return pref + [m for m in keyword_metrics(q) if m not in pref]
+
+
+def test_phieu_nhap_is_import_not_revenue():
+    assert _metrics("tháng này tổng giá trị các phiếu nhập hàng là bao nhiêu")[0] == "import_amount"
+    assert _metrics("coi gium thang 10/2025 nhap hang het bao nhieu tien")[0] == "import_amount"
+    assert _metrics("thang 1/2025 cua hang bo ra bnhiu tien nhap hang")[0] == "import_amount"
+
+
+def test_gia_nhap_binh_quan_thung_is_not_revenue():
+    q = "Trong tháng 1/2025, Mì Omachi sườn hầm nhập vào giá bình quân một thùng là bao nhiêu"
+    assert _metrics(q)[0] == "import_avg_price"
+
+
+def test_doanh_thu_binh_quan_stays_aov():
+    assert _metrics("Tuần trước doanh thu bình quân mỗi đơn là bao nhiêu")[0] == "aov"
+
+
+def test_don_da_huy_is_cancelled_not_all_orders():
+    assert _metrics("đếm số đơn đã huỷ trong tháng 12/2025")[0] == "cancelled_orders"
+    assert _metrics("cửa hàng có mấy đơn ở trạng thái huỷ")[0] == "cancelled_orders"
+
+
+def test_ranking_drops_time_subject():
+    from engine.answer import subjects_for_intent
+    subs = ["month", "product"]
+    assert subjects_for_intent(subs, ["rank_top"]) == ["product"]
+    assert subjects_for_intent(["month"], ["rank_top"]) == ["month"]
+    assert subjects_for_intent(subs, ["aggregate_total"]) == subs
+
+
+def test_ban_chay_maps_to_product_subject():
+    subs = _subjects("tháng 3/2025 top 5 hàng bán chạy nhất là gì")
+    assert "product" in subs
+
+
+def test_cua_hang_is_not_product_subject():
+    subs = _subjects("Tháng 12/2025 ngày nào cửa hàng bán được nhiều tiền nhất?")
+    assert "product" not in subs
+    assert subs[0] == "day"
+
+
+def test_money_ranking_prefers_revenue_metric():
+    from datetime import date
+    from engine.answer import candidate_specs
+    from dtypes import TimeWindow
+    win = TimeWindow(label="main", start=date(2026, 1, 1), end=date(2026, 1, 31))
+    q = expand_abbrev(nd("khách mua nhiều tiền nhất tháng 1/2026 là ai"))
+    specs = candidate_specs(q, [win], [], None, {})
+    assert specs and specs[0].metric == "revenue"
+    assert specs[0].subject == "customer"
+
+
+def test_formatter_maps_series_label_to_month():
+    from datetime import date
+    from fmt.formatter import _label_to_date
+    from dtypes import TimeWindow
+    wins = [TimeWindow(label="p2", start=date(2025, 12, 1), end=date(2025, 12, 31))]
+    assert _label_to_date("p2", wins) == "2025-12"
+
+
+def test_infer_check_direction():
+    from engine.answer import infer_check
+    assert infer_check(nd("doanh thu có tăng liên tục không")) == "series_increasing"
+    assert infer_check(nd("doanh thu tháng sau có luôn cao hơn tháng trước không")) == "series_increasing"
+    assert infer_check(nd("doanh thu có giảm liên tục không")) == "series_decreasing"
+    assert infer_check(nd("tháng này có bán được hàng không")) == "exists"
+
+
+def test_yes_no_question_expects_boolean():
+    from decide.candidate_check import check_candidate, expect_kind
+    from dtypes import Answer
+    q = "doanh thu 3 tháng 4/2026, 5/2026, 6/2026 có tăng liên tục không"
+    assert expect_kind(q) == "boolean"
+    ok, reason = check_candidate(q, Answer(type="number", value=12345))
+    assert not ok and reason == "boolean_q_badpred"

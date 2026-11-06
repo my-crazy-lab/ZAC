@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import llm.client as client_mod
 from llm.client import LLM
 
 
@@ -16,15 +17,27 @@ def _llm():
 
 def test_generate_closes_client_after_each_call(monkeypatch):
     seen: list[int] = []
+    created: list[object] = []
+    closed: list[object] = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            created.append(self)
+
+        async def aclose(self):
+            closed.append(self)
 
     async def fake_one(self, index, prompt, *args, **kwargs):
         seen.append(id(self._client))
         return "{}"
 
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr(LLM, "_one", fake_one)
     llm = _llm()
     llm.generate(["a"])
     llm.generate(["b"])
+
     assert llm._client is None
-    # hai lượt gọi dùng hai client khác nhau (không tái dùng pool cũ)
+    assert len(created) == 2 and created[0] is not created[1]
+    assert closed == created
     assert seen[0] != seen[1]
