@@ -9,6 +9,7 @@ from typing import Any
 import config
 from decide.answerability import check as check_answerability
 from decide.calibrate import load_model, predict_proba
+from decide.candidate_check import check_candidate
 from decide.features import extract_features
 from dtypes import Answer, AnswerCheck, AnswerType, BizContext, EntityMatch, TimeWindow
 
@@ -45,6 +46,11 @@ def decide(question: str, ctx: BizContext, windows: list[TimeWindow],
     if candidate is None:
         return Decision(action="abstain", answer=None,
                         p_unanswerable=check.p_unanswerable, reason="no_candidate")
+
+    ok_kind, kind_reason = check_candidate(question, candidate)
+    if not ok_kind:
+        return Decision(action="abstain", answer=None,
+                        p_unanswerable=check.p_unanswerable, reason=kind_reason)
 
     feats = extract_features(question, ctx, windows, entities,
                              spec_metric, spec_subject, spec_intent, spec_output)
