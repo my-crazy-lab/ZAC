@@ -2,8 +2,11 @@
 # Entry point BTC: /code/predict.sh (không tham số)
 set -euo pipefail
 
+# llama-server và các .so nằm trong /app của base image.
+export LD_LIBRARY_PATH="/app:${LD_LIBRARY_PATH:-}"
+
 MODEL="${MODEL:-/code/models/Qwen3-14B-Q4_K_M.gguf}"
-LLAMA_CTX="${LLAMA_CTX:-16384}"
+LLAMA_CTX="${LLAMA_CTX:-32768}"
 LLAMA_PARALLEL="${LLAMA_PARALLEL:-4}"
 LLAMA_THREADS="${LLAMA_THREADS:-16}"
 LLAMA_NGL="${LLAMA_NGL:-999}"
