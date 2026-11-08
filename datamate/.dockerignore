@@ -1,0 +1,23 @@
+# Build context là thư mục datamate/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+
+# Không cần cho inference
+public_test/
+docs/
+tests/
+runs/
+survey/
+
+# Artifact sinh ra khi đo, không đóng vào image
+train/submission*.jsonl
+train/benchmark*.jsonl
+train/logs/
+
+# Giữ: models/, train/, training_code/, docker/, requirements.txt

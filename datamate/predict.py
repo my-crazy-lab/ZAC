@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import time
 from collections import Counter, defaultdict
 from typing import Any
@@ -52,6 +53,11 @@ def _read_rules(split_dir: str) -> Any:
     path = os.path.join(split_dir, "rulebook.md")
     text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
     train_path = os.path.join(config.DATA_ROOT, "train", "rulebook.md")
+    if not os.path.exists(train_path):
+        # Trong image, /data chỉ có rulebook của split; rulebook train được
+        # đóng gói cạnh code để merge vocabulary/domain.
+        train_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "train", "rulebook.md")
     train_text = ""
     if os.path.exists(train_path):
         train_text = open(train_path, encoding="utf-8").read()
@@ -97,34 +103,57 @@ def run(split: str = "public_test", out_path: str | None = None,
             log.info("resume: bỏ qua %d câu đã có trong %s", len(done), out_path)
 
     mode = "a" if resume and done else "w"
+    result_log = os.path.join(log_dir, "answers.jsonl")
     with open(out_path, mode, encoding="utf-8") as out_f, \
-            open(os.path.join(log_dir, "decisions.jsonl"), mode, encoding="utf-8") as log_f:
+            open(os.path.join(log_dir, "decisions.jsonl"), mode, encoding="utf-8") as log_f, \
+            open(result_log, mode, encoding="utf-8") as result_f:
         businesses = [biz for biz in sorted(by_biz)
                       if not done.issuperset(q.id for q in by_biz[biz])]
+        write_lock = threading.Lock()
 
-        def write_business(biz: str, rows: list[tuple[Question, Answer, dict[str, Any]]]) -> None:
-            for q, ans, info in rows:
-                payload = {"id": q.id, **ans.to_json()}
+        def emit(q: Question, ans: Answer, info: dict[str, Any], biz: str) -> None:
+            """Ghi ngay từng câu: submission + decision + log đúng chuẩn BTC."""
+            payload = {"id": q.id, **ans.to_json()}
+            decision = {"id": q.id, "business": biz, "type": ans.type, **info}
+            record = {
+                "id": q.id,
+                "answer": ans.to_json(),
+                "elapsed_ms": int(info.get("elapsed_ms", 0)),
+                "thinking": info.get("thinking"),
+                "code": info.get("code"),
+                "output": ans.value if ans.type not in (
+                    AnswerType.ABSTAIN.value, AnswerType.UNANSWERABLE.value) else None,
+            }
+            if info.get("inputs") is not None:
+                record["inputs"] = info["inputs"]
+            with write_lock:
                 out_f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                log_f.write(json.dumps({"id": q.id, "business": biz, "type": ans.type,
-                                       **info}, ensure_ascii=False, default=str) + "\n")
+                log_f.write(json.dumps(decision, ensure_ascii=False, default=str) + "\n")
+                result_f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                out_f.flush()
+                log_f.flush()
+                result_f.flush()
                 stats[ans.type] += 1
 
-        def process_business(biz: str) -> tuple[str, list[tuple[Question, Answer, dict[str, Any]]]]:
-            worker_llm = build_client() if use_llm else None
+        def process_business(biz: str, client: Any = None) -> str:
+            worker_llm = client if client is not None else (
+                build_client() if use_llm else None)
             try:
                 ctx = build_context(os.path.join(root, "data", biz), rules.knobs, rules,
                                     worker_llm)
             except Exception as exc:  # noqa: BLE001
                 log.warning("bỏ qua shop %s: %s", biz, exc)
-                return biz, [(q, Answer(type=AnswerType.ABSTAIN.value),
-                              {"path": "error_business", "error": str(exc)})
-                             for q in by_biz[biz] if q.id not in done]
-            rows = []
+                for q in by_biz[biz]:
+                    if q.id not in done:
+                        emit(q, Answer(type=AnswerType.ABSTAIN.value),
+                             {"path": "error_business", "error": str(exc)}, biz)
+                return biz
             for q in sorted(by_biz[biz], key=lambda x: x.id):
-                if q.id not in done:
-                    rows.append((q, *_answer_one(q, ctx, rules, cal, worker_llm)))
-            return biz, rows
+                if q.id in done:
+                    continue
+                ans, info = _answer_one(q, ctx, rules, cal, worker_llm)
+                emit(q, ans, info, biz)
+            return biz
 
         if parallel > 1 and len(businesses) > 1:
             # openpyxl lazy-imports modules; initialize it before threads to avoid
@@ -134,28 +163,14 @@ def run(split: str = "public_test", out_path: str | None = None,
             with ThreadPoolExecutor(max_workers=parallel) as pool:
                 futures = [pool.submit(process_business, biz) for biz in businesses]
                 for future in as_completed(futures):
-                    biz, rows = future.result()
-                    write_business(biz, rows)
-                    out_f.flush()
-                    log_f.flush()
+                    future.result()
         else:
             for biz in businesses:
-                try:
-                    ctx = build_context(os.path.join(root, "data", biz), rules.knobs, rules, llm)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("bỏ qua shop %s: %s", biz, exc)
-                    write_business(biz, [(q, Answer(type=AnswerType.ABSTAIN.value),
-                                         {"path": "error_business", "error": str(exc)})
-                                        for q in by_biz[biz] if q.id not in done])
-                    continue
-                for q in sorted(by_biz[biz], key=lambda x: x.id):
-                    if q.id in done:
-                        continue
-                    ans, info = _answer_one(q, ctx, rules, cal, llm)
-                    write_business(biz, [(q, ans, info)])
+                process_business(biz, llm)
 
     summary = {"split": split, "n": len(questions), "by_type": dict(stats),
-               "elapsed_s": round(time.time() - t0, 1), "out": out_path}
+               "elapsed_s": round(time.time() - t0, 1), "out": out_path,
+               "logs": log_dir, "result_log": result_log}
     log.info("xong: %s", summary)
     return summary
 
@@ -201,6 +216,15 @@ def _error_ids(paths: list[str], limit: int) -> set[str]:
 
 def _answer_one(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
                 ) -> tuple[Answer, dict[str, Any]]:
+    """Bọc đo thời gian thực cho log BTC (elapsed_ms từ lúc nhận câu)."""
+    t0 = time.time()
+    ans, info = _answer_one_inner(q, ctx, rules, cal, llm)
+    info.setdefault("elapsed_ms", int((time.time() - t0) * 1000))
+    return ans, info
+
+
+def _answer_one_inner(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
+                      ) -> tuple[Answer, dict[str, Any]]:
     info: dict[str, Any] = {}
     q_nd = expand_abbrev(nd(q.text))
     windows, unresolved = resolve_time(q_nd, q.as_of, rules.knobs, cal)
@@ -246,6 +270,12 @@ def _answer_one(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
             info["decision"] = {"action": det_dec.action, "reason": det_dec.reason,
                                 "p_unanswerable": det_dec.p_unanswerable}
             info["path"] = "deterministic"
+            info["code"] = "engine/compile.py::compile_spec"
+            info["inputs"] = {
+                "spec": spec.to_dict() if spec else None,
+                "as_of": q.as_of.isoformat(),
+                "windows": [w.as_dict() for w in windows],
+            }
             return det_dec.answer, info
 
     candidates: list[tuple[str, Answer, Any]] = []
@@ -291,6 +321,17 @@ def _answer_one(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
         info["ensemble"] = {"candidates": len(candidates), "accepted": len(accepted),
                             "agreement": counts[_answer_key(best[1])]}
         info["path"] = "ensemble_" + best[0]
+        if best[0] == "path1_spec":
+            info["code"] = p1.get("sql_full") or p1.get("sql")
+        elif best[0] == "path2_sql":
+            info["code"] = p2.get("sql")
+        else:
+            info["code"] = "engine/compile.py::compile_spec"
+            info["inputs"] = {
+                "spec": spec.to_dict() if spec else None,
+                "as_of": q.as_of.isoformat(),
+                "windows": [w.as_dict() for w in windows],
+            }
         return best[1], info
 
     # 5. escalate / abstain
@@ -301,6 +342,7 @@ def _answer_one(q: Question, ctx: Any, rules: Any, cal: Any, llm: Any
                         "p_unanswerable": dec.p_unanswerable}
     if dec.answer is not None and dec.action in ("answer", "escalate"):
         info["path"] = "escalate"
+        info["code"] = None
         return dec.answer, info
     if dec.action == "unanswerable":
         info["path"] = "decide_unanswerable"

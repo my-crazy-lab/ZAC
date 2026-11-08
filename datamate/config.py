@@ -67,11 +67,17 @@ def split_dir(split: str | None = None) -> str:
 
 
 def out_path(split: str | None = None) -> str:
+    env = os.environ.get("DATAMATE_OUT_PATH")
+    if env:
+        return env
     s = split or SPLIT
     return os.path.join(DATA_ROOT, s, "submission.jsonl")
 
 
 def log_dir(split: str | None = None) -> str:
+    env = os.environ.get("DATAMATE_LOG_DIR")
+    if env:
+        return env
     s = split or SPLIT
     return os.path.join(DATA_ROOT, s, "logs")
 

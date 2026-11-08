@@ -110,6 +110,7 @@ def run_path2(question: str, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
                 continue
             return None, info
         info["sql"] = sql[:800]
+        info["sql_full"] = sql
         res = run_sql(ctx.con, sql)
         if not res.error:
             break

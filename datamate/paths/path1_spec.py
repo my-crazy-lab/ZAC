@@ -175,6 +175,7 @@ def _run_planner(question: str, ctx: BizContext, knobs: Knobs,
         info["spec"] = spec.to_dict()
         plan_sql = compile_spec(spec, ctx, knobs, windows, as_of)
         info["sql"] = plan_sql.sql[:600]
+        info["sql_full"] = plan_sql.sql
         res = run_sql(ctx.con, plan_sql.sql)
         verify_errs = verify_result(res, spec)
         if verify_errs:
@@ -228,6 +229,7 @@ def _run_legacy(question: str, ctx: BizContext, knobs: Knobs,
         return None, info
     ans = to_submission(plan, res, spec, spec.output, ctx, knobs, windows)
     info["sql"] = plan.sql[:500]
+    info["sql_full"] = plan.sql
     if ans.type == AnswerType.ABSTAIN.value:
         return None, info
     return ans, info
