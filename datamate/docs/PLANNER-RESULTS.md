@@ -69,7 +69,31 @@ coverage chỉ 57% và PA bị kéo xuống.
 | `v_imports` rỗng | nhiều | mapper không map bảng nhập | bổ sung mapping imports |
 | `.window.trend` | 2 | id LLM bịa / chuỗi nhiều kỳ | siết prompt + validate id |
 
-## 4. Cách chạy lại
+## 4. public_test — chấm proxy bằng LLM judge
+
+public_test không có file đáp án. Đã chạy 311/1.000 câu (4 shop xong:
+`dev_001`, `dev_002`, `dev_004`, `dev_005`), rồi dừng để chấm bằng
+`dev/judge_submission.py`: dựng lại đúng spec của đường đã chọn → SQL → kết quả,
+đưa ngữ cảnh shop + SQL/kết quả cho LLM chấm correct/incorrect/uncertain.
+
+| Chỉ số | Giá trị |
+|---|---:|
+| Câu đã có submission | 311 |
+| Câu trả lời (graded) | 109 |
+| Correct | 87 |
+| Incorrect | 22 |
+| PA trên câu trả lời | **0.596** |
+| PA trên 311 câu (abstain = 0) | **0.209** |
+| Precision proxy | **0.798** |
+
+Theo type: number 0.61, list 0.45, string 0.71, date 0.60, percent 0.33.
+Theo shop: `dev_001` 0.86, `dev_002` 0.78, `dev_004` 0.41, `dev_005` 0.17.
+
+Đây là **proxy**, không phải điểm BTC: judge không có ground truth, chỉ kiểm tra
+spec/SQL/kết quả/định dạng. Các lỗi còn lại tập trung ở shop yếu (`dev_005`),
+filter nhóm hàng và quy đổi đơn vị.
+
+## 5. Cách chạy lại
 
 ```bash
 cd datamate
