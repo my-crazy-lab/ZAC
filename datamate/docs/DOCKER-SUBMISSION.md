@@ -1,5 +1,7 @@
 # Docker submission — trạng thái & checklist
 
+Mô tả solution để dán form: [`SOLUTION_DESCRIPTION.md`](SOLUTION_DESCRIPTION.md).
+
 ## Đã xong
 
 | Hạng mục | Trạng thái |
@@ -19,15 +21,15 @@
 ## Artifact trên server
 
 ```text
-/home/neurosus/zac_build/zaic2026_datamate_zac.tar.gz
-/home/neurosus/zac_build/zaic2026_datamate_zac.tar.gz.md5
+/home/neurosus/zac_build/zaic2026_datamate_mh.tar.gz
+/home/neurosus/zac_build/zaic2026_datamate_mh.tar.gz.md5
 ```
 
-- Image: `zaic2026_datamate_zac:final`
+- Image: `zaic2026_datamate_mh:final` (team **MH**)
 - `.tar.gz`: ~11 GB
 - Uncompressed `.tar`: **13,134,734,848 bytes** (< 100 GB)
-- MD5: **03213806e6c16b0bb9815cafd69d7538**
-- Kiểm tra: `md5sum -c zaic2026_datamate_zac.tar.gz.md5` → OK
+- MD5: **b21a871e11e32d5f936065dc57d72d39**
+- Kiểm tra: `md5sum -c zaic2026_datamate_mh.tar.gz.md5` → OK
 
 ## Chạy kiểm tra kiểu BTC
 
@@ -36,7 +38,7 @@ docker run --rm --gpus '"device=0,1"' --network none --shm-size=16g \
   --entrypoint bash \
   -v /path/to/public_test:/data:ro \
   -v /path/to/output:/result \
-  zaic2026_datamate_zac:final /code/predict.sh
+  zaic2026_datamate_mh:final /code/predict.sh
 ```
 
 Máy dev 1×RTX 3060 12GB phải hạ context:
@@ -50,9 +52,9 @@ Máy chấm 2×RTX 5090 dùng mặc định `LLAMA_CTX=32768`, `LLAMA_PARALLEL=4
 
 ## Còn lại để nộp
 
-1. **Chốt team name** (lowercase). Nếu không phải `zac`, retag rồi export lại:
+1. **Team name đã chốt là MH**; nếu BTC yêu cầu tên khác, retag rồi export lại:
    ```bash
-   docker tag zaic2026_datamate_zac:final zaic2026_datamate_<team>:final
+   docker tag zaic2026_datamate_mh:final zaic2026_datamate_<team>:final
    set -o pipefail
    docker save zaic2026_datamate_<team>:final | pigz -p 8 > zaic2026_datamate_<team>.tar.gz
    md5sum zaic2026_datamate_<team>.tar.gz > zaic2026_datamate_<team>.tar.gz.md5
