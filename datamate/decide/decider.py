@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +35,8 @@ def decide(question: str, ctx: BizContext, windows: list[TimeWindow],
            spec_subject: str | None = None,
            spec_intent: str | None = None,
            spec_output: str | None = None,
-           as_of=None) -> Decision:
+           as_of=None, candidate_path: str | None = None,
+           candidate_agreement: float = 1.0) -> Decision:
     """Quyết định cuối cho một câu hỏi."""
     model = model or load_model()
     check: AnswerCheck = check_answerability(question, ctx, windows, entities, as_of)
@@ -64,8 +66,16 @@ def decide(question: str, ctx: BizContext, windows: list[TimeWindow],
         return Decision(action="abstain", answer=None,
                         p_unanswerable=check.p_unanswerable, reason=sem_reason)
 
+    # Đo riêng năng lực planner/SQL: bỏ qua calibration cũ (đang học trên
+    # pipeline cũ nên chặn oan đáp án đúng).
+    if os.environ.get("DATAMATE_DECIDER", "on").lower() in ("off", "0", "none"):
+        return Decision(action="answer", answer=candidate, p_unanswerable=0.0,
+                        reason="decider_off")
+
     feats = extract_features(question, ctx, windows, entities,
-                             spec_metric, spec_subject, spec_intent, spec_output)
+                             spec_metric, spec_subject, spec_intent, spec_output,
+                             candidate_path=candidate_path,
+                             candidate_agreement=candidate_agreement)
     p = predict_proba(model, feats)
     threshold = float(model.get("threshold", 0.35))
     margin = float(model.get("margin", config.CALIB_MARGIN))

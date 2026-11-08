@@ -55,9 +55,61 @@ STATUS_RATE_RE = re.compile(
     rf"(?:ti le|tỷ lệ|tỉ lệ|ty le|phan tram|phần trăm|%)")
 
 
+# Từ vựng chỉ **chiều phân tích** (subject), không phải mốc thời gian.
+# "tháng 9/2025" là mốc thời gian; "tháng nào/theo tháng" mới là subject month.
+SUBJECT_CUES: dict[str, re.Pattern[str]] = {
+    "product": re.compile(
+        r"\bsan pham\b|\bhang hoa\b|\bmat hang\b|\bhang nao\b|\bmon nao\b"
+        r"|\bhang chay\b|\bban chay\b|\btop .*hang\b|\bnhung gi\b"),
+    "category": re.compile(r"\bnhom hang\b|\bnganh hang\b|\bloai hang\b|\bnghanh\b"),
+    "customer": re.compile(r"\bkhach hang\b|\bkhach nao\b|\bkhach mua\b|\bkhach nao mua\b"),
+    "channel": re.compile(r"\btheo kenh\b|\bkenh nao\b|\bkenh ban\b"),
+    "pay_method": re.compile(r"\btheo (?:hinh thuc|phuong thuc) thanh toan\b"
+                             r"|\bthanh toan nao\b"),
+    "employee": re.compile(r"\bnhan vien\b"),
+    "month": re.compile(r"\btheo thang\b|\btung thang\b|\bthang nao\b|\bcac thang\b"
+                        r"|\bso sanh thang\b|\bqua cac thang\b"),
+    "week": re.compile(r"\btheo tuan\b|\btung tuan\b|\btuan nao\b|\bcac tuan\b"),
+    "day": re.compile(r"\btheo ngay\b|\btung ngay\b|\bngay nao\b|\bcac ngay\b"),
+}
+
+
 def topic_domains(q_nd: str) -> set[str]:
     """Miền dữ liệu mà câu hỏi nhắc tới (có thể nhiều)."""
     return {d for d, pat in DOMAIN_PATTERNS.items() if pat.search(q_nd)}
+
+
+def subject_cues(q_nd: str) -> set[str]:
+    return {s for s, pat in SUBJECT_CUES.items() if pat.search(q_nd)}
+
+
+BESTSELLER_RE = re.compile(
+    r"\bchay nhat\b|\bban chay\b|\bban nhieu nhat\b|\bban duoc nhieu\b"
+    r"|\bban nhieu\b")
+MONEY_RE = re.compile(r"\bdoanh thu\b|\btien\b|\bthu ve\b|\bdoanh so\b|\bgia tri\b")
+
+
+def bestseller_compatible(q_nd: str, metric: str | None,
+                          default: str = "qty") -> tuple[bool, str]:
+    """"Bán chạy/chạy nhất" mặc định là số lượng, trừ khi câu hỏi nói về tiền."""
+    if not metric or not BESTSELLER_RE.search(q_nd) or MONEY_RE.search(q_nd):
+        return True, ""
+    if metric == default:
+        return True, ""
+    return False, f"bestseller_needs_{default}"
+
+
+def subject_compatible(q_nd: str, subject: str | None) -> tuple[bool, str]:
+    """Template có đúng chiều phân tích mà câu hỏi nhắc tới không.
+
+    ``subject`` rỗng/none/window được phép vì tổng có filter vẫn đúng nghĩa.
+    """
+    if not subject or subject in ("none", "null", "window"):
+        return True, ""
+    cues = subject_cues(q_nd)
+    if not cues or subject in cues:
+        return True, ""
+    return False, f"subject_mismatch:{subject}!={','.join(sorted(cues))}"
 
 
 def domain_of(metric: str | None) -> str | None:

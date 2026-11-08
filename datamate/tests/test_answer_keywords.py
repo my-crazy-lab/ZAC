@@ -126,6 +126,12 @@ def test_formatter_maps_series_label_to_month():
     assert _label_to_date("p2", wins) == "2025-12"
 
 
+def test_formatter_rejects_non_finite_numbers():
+    from fmt.formatter import _dec
+    assert _dec(float("nan")) is None
+    assert _dec(float("inf")) is None
+
+
 def test_category_value_filter_from_dictionary():
     from engine.answer import filters_from
     vd = {"category": ["Thực phẩm", "Đồ uống", "Khác"]}

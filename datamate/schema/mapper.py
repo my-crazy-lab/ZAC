@@ -33,7 +33,7 @@ NAME_MIN_SCORE = 0.78
 TABLE_PREFERENCE: dict[str, tuple[str, ...]] = {
     "lines": ("ban hang", "chi tiet don", "chitiet", "don hang", "hoa don chi tiet",
               "so ban hang", "phieu ban"),
-    "orders": ("don hang", "hoa don", "so ban hang", "bao cao ban hang"),
+    "orders": ("don hang", "hoa don", "hoadon", "danhsachhoadon", "so ban hang", "bao cao ban hang"),
     "products": ("san pham", "danh muc", "hang hoa", "bang gia", "don vi"),
     "customers": ("khach", "khach hang"),
     "payments": ("thanh toan", "quy", "cong no", "thu tien"),
@@ -48,6 +48,7 @@ TABLE_PREFERENCE: dict[str, tuple[str, ...]] = {
 _README_SECTION_RE = re.compile(r"^##\s+Cột trong\s+`?([^`]+)`?", re.IGNORECASE)
 _README_ITEM_RE = re.compile(r"^-\s+\*\*(.+?)\*\*\s*:\s*(.+)$")
 _README_MENTION_RE = re.compile(r"`?([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)`?")
+_README_CONVENTIONS_RE = re.compile(r"^##\s+Quy ước\s*$", re.IGNORECASE)
 
 
 def parse_readme(readme: str) -> dict[str, dict[str, str]]:
@@ -79,6 +80,28 @@ def parse_readme(readme: str) -> dict[str, dict[str, str]]:
             desc = s.strip()
             out.setdefault(tbl, {}).setdefault(col, desc)
     return out
+
+
+def parse_readme_facts(readme: str) -> dict[str, Any]:
+    """Tách phần README mà canonicalizer/prompt cần biết ngoài mô tả cột."""
+    lines = (readme or "").splitlines()
+    conventions: list[str] = []
+    in_conventions = False
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("## "):
+            in_conventions = bool(_README_CONVENTIONS_RE.match(line))
+            continue
+        if in_conventions and line:
+            conventions.append(line.lstrip("-* ").strip())
+    text = " ".join(conventions)
+    return {
+        "columns": parse_readme(readme),
+        "conventions": conventions,
+        "unit_rules": [x for x in conventions if "quy đổi" in x.lower() or "quy doi" in x.lower()],
+        "special_rows": [x for x in ("voucher", "dùng điểm", "dung diem", "phí ship", "phi ship", "phí phục vụ", "phi phuc vu")
+                         if x in text.lower()],
+    }
 
 
 def _profile(df: Any, col: str, sample: int = 2000) -> dict[str, Any]:
@@ -315,8 +338,9 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
             # chứa sổ bán hàng, bảng giao hàng, danh mục… với cột khác nhau.
             # Chỉ gộp khi tập cột gần như trùng **và** cùng tên logic (các
             # sheet tháng / file _1, _2 của cùng một sổ).
-            if overlap >= 0.8 and _same_logical_table(info["table"].name,
-                                                      other["table"].name):
+            same_source = str(info["table"].source) == str(other["table"].source)
+            if overlap >= 0.8 and (same_source or _same_logical_table(
+                    info["table"].name, other["table"].name)):
                 tables_same.append(other["table"].name)
         entities[ent] = {
             "table": info["table"].name,
@@ -327,6 +351,19 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
         }
 
     # bảng phẳng: bảng "lines" cũng chứa thuộc tính đơn → ghi nhận
+    if "lines" in entities and "order_id" not in entities["lines"]["cols"]:
+        # Cột mã phiếu trên sổ bán hàng đôi khi bị global greedy gán nhầm
+        # sang import_id. Khôi phục vai trò bắt buộc của dòng bán nếu tên cột
+        # khớp mạnh; đây là sửa xung đột vai trò, không phụ thuộc business.
+        info = next((i for i in per_table
+                     if i["table"].name == entities["lines"]["table"]), None)
+        if info is not None:
+            best = max(info["scores"].get("order_id", {}).items(),
+                       key=lambda item: item[1][0], default=None)
+            if best is not None and best[1][0] >= 0.85 and best[1][2] >= NAME_MIN_SCORE:
+                col, (score, _nlen, _ns) = best
+                entities["lines"]["cols"]["order_id"] = col
+                entities["lines"]["scores"]["order_id"] = round(float(score), 4)
     if "lines" in entities and "orders" in entities:
         if entities["lines"]["table"] == entities["orders"]["table"]:
             entities["lines"]["order_cols"] = dict(entities["orders"]["cols"])

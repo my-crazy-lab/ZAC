@@ -111,6 +111,13 @@ datamate/public_test/data/
 *.duckdb
 *.sqlite
 *.sqlite3
+# datamate: submission/benchmark sinh ra khi đo (không commit)
+datamate/train/submission*.jsonl
+datamate/train/benchmark*.jsonl
+datamate/public_test/submission*.jsonl
+
+# Command Code local workspace
+.commandcode/
 # dump / backup
 *.dump
 *.bak

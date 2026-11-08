@@ -19,7 +19,11 @@ from ingest.reader import cache_key, load_business, readme_text
 from schema.archetypes import detect_archetype
 from schema.canon import canonicalize
 from schema.invariants import compute_all
-from schema.mapper import map_business
+from schema.mapper import map_business, parse_readme_facts
+from schema.business_graph import (build_business_graph, render_graph_card,
+                                   validate_business_graph)
+from schema.context import build_snapshot, compile_context
+from engine.catalog import build_catalog
 from text.entity_linker import build_entity_index
 
 log = logging.getLogger(__name__)
@@ -323,6 +327,8 @@ def build_context(biz_dir: str, knobs: Knobs, rules: RuleSpec, llm: Any = None,
     candidates = map_business(tables, readme, llm)
     mapping_cand = candidates[0]
     mapping = mapping_cand.mapping
+    business_graph = build_business_graph(tables, readme, mapping)
+    graph_issues = validate_business_graph(business_graph, mapping)
 
     canon = canonicalize(tables, mapping, code, readme)
     inv_results, inv_penalties = compute_all(
@@ -365,18 +371,26 @@ def build_context(biz_dir: str, knobs: Knobs, rules: RuleSpec, llm: Any = None,
     date_min, date_max = _date_range(con)
     card = build_card(con, code, data_caps, date_min, date_max, schema_conf, knobs,
                       value_dict, readme)
+    flags["graph_issues"] = graph_issues
 
     views = {r[0] for r in con.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
     ).fetchall()}
 
-    return BizContext(
+    ctx = BizContext(
         con=con, archetype=code, data_caps=data_caps, views=views,
         date_min=date_min, date_max=date_max,
         schema_conf=schema_conf, flags=flags, status_invalid=status_invalid,
         value_dict=value_dict, card=card, entity_index=entity_index, rules=rules,
         invariants=inv_results, verified=True, business_id=business_id, biz_dir=biz_dir,
+        graph=business_graph,
     )
+    ctx.context = compile_context(readme, mapping, business_graph, knobs, views,
+                                  data_caps, archetype=code, schema_conf=schema_conf,
+                                  graph_issues=graph_issues,
+                                  snapshot=build_snapshot(con, views))
+    ctx.catalog = build_catalog(ctx)
+    return ctx
 
 
 def _date_range(con: Any) -> tuple[date, date]:
@@ -432,7 +446,9 @@ def build_card(con: Any, archetype: str, data_caps: set[str], date_min: date,
     if diff:
         lines.append("[QUY TẮC KHÁC MẶC ĐỊNH] " +
                      ", ".join(f"{k}={v}" for k, v in sorted(diff.items())))
-    if readme:
-        snippet = " ".join(readme.split())[:400]
-        lines.append(f"[GHI CHÚ README] {snippet}")
+    facts = parse_readme_facts(readme)
+    if facts["conventions"]:
+        lines.append("[QUY ƯỚC README] " + " | ".join(facts["conventions"][:8])[:1400])
+    if facts["unit_rules"]:
+        lines.append("[QUY ĐỔI README] " + " | ".join(facts["unit_rules"][:6])[:800])
     return "\n".join(lines)

@@ -39,6 +39,8 @@ PARAM_KEYS = {"compare_mode", "check", "threshold", "expiring_days", "unit_name"
 FILTER_FIELDS = {"product", "category", "customer", "channel", "pay_method",
                  "employee", "customer_group", "size", "unit_name"}
 FILTER_OPS = {"=", "!=", "in"}
+# Metric cộng dồn: không có dòng trong kỳ ⇒ 0, không phải NULL.
+ZERO_WHEN_EMPTY = {"revenue", "qty", "profit", "import_amount", "cancelled_orders"}
 
 
 def _window_map(windows: list[TimeWindow]) -> dict[str, TimeWindow]:
@@ -79,6 +81,31 @@ def _resolve_time_alias(label: str, windows: list[TimeWindow]) -> str | None:
     return None
 
 
+_FILTER_SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "product": ("product_code", "product_name"),
+    "category": ("category",),
+    "customer": ("customer_key", "customer_name"),
+    "channel": ("channel",),
+    "pay_method": ("pay_method",),
+    "employee": ("employee",),
+    "customer_group": ("customer_group",),
+    "size": ("size",),
+    "unit_name": ("base_unit", "unit_name"),
+}
+
+
+def _source_columns(ctx: BizContext, source: str) -> set[str] | None:
+    con = getattr(ctx, "con", None)
+    if con is None or not source:
+        return None
+    try:
+        return {str(r[0]) for r in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=?",
+            [source]).fetchall()}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def validate_spec(spec: Spec, ctx: BizContext, windows: list[TimeWindow],
                   entities: list[EntityMatch] | None = None) -> list[str]:
     """Trả danh sách lỗi (rỗng ⇒ hợp lệ)."""
@@ -93,6 +120,9 @@ def validate_spec(spec: Spec, ctx: BizContext, windows: list[TimeWindow],
                 spec.time[i] = alias
             else:
                 errs.append(f"time_label_unknown:{label}")
+    # Nhiều nhãn thô cùng ánh xạ về một cửa sổ (vd 2025-01-01 và 2025-01-31
+    # đều → main) sẽ tạo dòng trùng trong chuỗi.
+    spec.time = list(dict.fromkeys(spec.time or []))
 
     # 2. filters: giá trị phải thuộc danh sách ứng viên
     allowed_values = _allowed_filter_values(ctx, entities)
@@ -121,6 +151,19 @@ def validate_spec(spec: Spec, ctx: BizContext, windows: list[TimeWindow],
     if m is not None and spec.subject:
         if spec.subject not in m.subjects and spec.subject not in ("none", "null"):
             errs.append(f"subject_not_allowed:{spec.metric}/{spec.subject}")
+    # Filter chỉ hợp lệ nếu cột filter có thật trong nguồn của metric.
+    if m is not None and spec.filters:
+        source = m.source
+        if (m.name == "orders"
+                and (spec.params or {}).get("threshold") not in (None, "")):
+            source = "v_lines"
+        cols = _source_columns(ctx, source)
+        if cols:
+            for f in spec.filters:
+                field = str(f.get("field", ""))
+                candidates = _FILTER_SOURCE_COLUMNS.get(field, (field,))
+                if not any(c in cols for c in candidates):
+                    errs.append(f"filter_not_in_source:{field}")
 
     # 4. intent ↔ output
     if spec.intent not in INTENT_OUTPUTS:
@@ -177,11 +220,10 @@ def _time_predicate(spec: Spec, windows: list[TimeWindow], knobs: Knobs,
     win = wmap.get(label)
     if win is None:
         return "TRUE"
-    if win.kind == "cumulative":
-        pred = f"(s.{date_col} <= DATE '{win.end.isoformat()}')"
-    else:
-        pred = (f"(s.{date_col} BETWEEN DATE '{win.start.isoformat()}' "
-                f"AND DATE '{win.end.isoformat()}')")
+    # Cửa sổ lũy kế vẫn có start thật (đầu năm, đầu kỳ). Bỏ start biến
+    # "từ đầu năm đến nay" thành "toàn bộ dữ liệu đến nay".
+    pred = (f"(s.{date_col} BETWEEN DATE '{win.start.isoformat()}' "
+            f"AND DATE '{win.end.isoformat()}')")
     if win.kind == "shift":
         lo, hi = knobs.shift_morning if win.shift == "sang" else knobs.shift_afternoon
         pred += (f" AND EXTRACT(hour FROM s.order_ts) BETWEEN {int(lo)} AND {int(hi)}")
@@ -197,17 +239,20 @@ def _filter_predicate(spec: Spec, ctx: BizContext) -> str:
         if not values:
             continue
         vals_sql = ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+        vals_ci = ", ".join("'" + v.lower().replace("'", "''") + "'" for v in values)
         if field == "product":
-            clause = f"s.product_code IN ({vals_sql})"
+            # Người dùng hỏi bằng tên hàng; filter có thể là tên hoặc mã.
+            clause = (f"(s.product_code IN ({vals_sql}) OR "
+                      f"lower(s.product_name) IN ({vals_ci}))")
         elif field == "category":
-            clause = f"s.category IN ({vals_sql})"
+            clause = f"lower(s.category) IN ({vals_ci})"
         elif field == "customer":
             clause = (f"(s.customer_key IN ({vals_sql}) OR "
-                      f"lower(s.customer_name) IN ({vals_sql}))")
+                      f"lower(s.customer_name) IN ({vals_ci}))")
         elif field == "unit_name":
-            clause = f"s.base_unit IN ({vals_sql})"
+            clause = f"lower(s.base_unit) IN ({vals_ci})"
         else:
-            clause = f"s.{field} IN ({vals_sql})"
+            clause = f"lower(s.{field}) IN ({vals_ci})"
         if op == "!=":
             clause = f"NOT ({clause})"
         parts.append(clause)
@@ -291,7 +336,47 @@ def compile_spec(spec: Spec, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
 
     multi_field = (spec.params or {}).get("multi_field")
     multi_values = (spec.params or {}).get("multi_values") or []
-    if multi_field and multi_values and spec.intent in ("aggregate_total", "multi_value"):
+
+    threshold_value = None
+    if m.name in ("orders", "customers") and spec.intent == "aggregate_total":
+        raw_thr = (spec.params or {}).get("threshold")
+        if raw_thr not in (None, ""):
+            if isinstance(raw_thr, (int, float)):
+                threshold_value = float(raw_thr)
+            else:
+                digits = _re.sub(r"[^\d.\-]", "", str(raw_thr)).replace(".", "")
+                try:
+                    threshold_value = float(digits)
+                except ValueError:
+                    threshold_value = None
+
+    if (threshold_value is not None and m.name == "orders"
+            and "v_lines" in getattr(ctx, "views", set())):
+        # Đếm đơn theo ngưỡng doanh thu/tiền hàng của cả đơn.
+        sql = f"""
+            SELECT COUNT(*) AS value FROM (
+                SELECT s.order_id, SUM(COALESCE(s.line_amount_net, 0)) AS v
+                FROM v_lines s
+                WHERE {time_pred} AND {filter_pred} AND s.order_date <= {as_of_sql}
+                GROUP BY s.order_id
+                HAVING v >= {threshold_value}
+            ) t"""
+        post = None
+    elif (threshold_value is not None and m.name == "customers"
+          and "v_orders" in getattr(ctx, "views", set())):
+        # Đếm khách có ít nhất N đơn trong kỳ.
+        sql = f"""
+            SELECT COUNT(*) AS value FROM (
+                SELECT COALESCE(NULLIF(s.customer_key, ''), lower(s.customer_name))
+                       AS customer_key
+                FROM v_orders s
+                WHERE {time_pred} AND {filter_pred} AND s.order_date <= {as_of_sql}
+                  AND NOT s.is_walkin
+                GROUP BY 1
+                HAVING COUNT(DISTINCT s.order_id) >= {threshold_value}
+            ) t"""
+        post = None
+    elif multi_field and multi_values and spec.intent in ("aggregate_total", "multi_value"):
         # Mỗi giá trị một nhánh; list giữ đúng thứ tự câu hỏi nêu.
         parts = []
         for v in multi_values:
@@ -310,6 +395,9 @@ def compile_spec(spec: Spec, ctx: BizContext, knobs: Knobs, windows: list[TimeWi
                                          or m.name == "cancelled_orders"):
             value_expr = ("100.0 * COUNT(*) FILTER (WHERE s.is_cancelled)"
                           " / NULLIF(COUNT(*), 0)")
+        # Tổng của tập rỗng là 0 (không bán được gì), không phải NULL → retry.
+        if m.name in ZERO_WHEN_EMPTY and spec.output != "percent":
+            value_expr = f"COALESCE({value_expr}, 0)"
         sql = templates.T1.format(VALUE_EXPR=value_expr, SOURCE=source, TIME=time_pred,
                                    FILTER=filter_pred, DATE_COL=date_col, AS_OF=as_of_sql)
         post = None

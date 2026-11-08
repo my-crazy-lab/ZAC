@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -15,6 +16,7 @@ from engine.executor import run_sql
 from engine.sandbox import SqlRejected, check_sql
 from fmt.formatter import to_submission
 from llm.prompts import sql_prompt
+from schema.business_graph import semantic_graph_issues
 
 log = logging.getLogger(__name__)
 
@@ -40,41 +42,81 @@ def extract_sql(text: str) -> str:
     return sql
 
 
+def _parse_sql_text(text: str) -> str:
+    try:
+        return str((json.loads(text) or {}).get("sql", ""))
+    except (ValueError, TypeError, AttributeError):
+        return extract_sql(text)
+
+
+def _validate_sql_refs(ctx: BizContext, sql: str) -> str | None:
+    if re.search(r"\bas_of\b", sql, re.IGNORECASE):
+        return "không dùng as_of như tên cột/biến; dùng ngày ISO literal"
+    names = set(getattr(ctx, "views", set()))
+    try:
+        names |= {str(x[0]) for x in ctx.con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()}
+    except Exception:
+        pass
+    for name in re.findall(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)", sql, re.IGNORECASE):
+        if name not in names:
+            return f"view/table không tồn tại: {name}"
+        if not name.startswith("v_"):
+            return f"chỉ được query canonical view v_*: {name}"
+    return None
+
+
 def run_path2(question: str, ctx: BizContext, knobs: Knobs, windows: list[TimeWindow],
               as_of, llm: Any) -> tuple[Answer | None, dict[str, Any]]:
     """Trả (Answer | None, thông tin debug)."""
     info: dict[str, Any] = {"path": "sql"}
+    if os.environ.get("DATAMATE_PATH2", "0") != "1":
+        info["skipped"] = "disabled"
+        return None, info
     if llm is None or not getattr(llm, "available", True):
         info["skipped"] = "no_llm"
         return None, info
     tables = _tables_block(ctx)
-    prompt = sql_prompt(question, ctx, as_of.isoformat(), tables)
-    try:
-        outs = llm.generate([prompt], json_schema=SQL_SCHEMA)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("path2 lỗi: %s", exc)
-        info["error"] = str(exc)
-        return None, info
-    text = (outs or [""])[0]
-    info["raw"] = text[:400]
+    prompt = sql_prompt(question, ctx, as_of.isoformat(), tables, windows)
     sql = ""
-    try:
-        obj = json.loads(text)
-        sql = str(obj.get("sql", ""))
-    except (ValueError, TypeError, AttributeError):
-        sql = extract_sql(text)
-    if not sql:
-        info["error"] = "no_sql"
-        return None, info
-    try:
-        check_sql(sql)
-    except SqlRejected as exc:
-        info["rejected"] = str(exc)
-        return None, info
-    info["sql"] = sql[:800]
-    res = run_sql(ctx.con, sql)
-    if res.error:
+    res = None
+    for attempt in range(2):
+        try:
+            outs = llm.generate([prompt], json_schema=SQL_SCHEMA)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("path2 lỗi: %s", exc)
+            info["error"] = str(exc)
+            return None, info
+        text = (outs or [""])[0]
+        info["raw"] = text[:400]
+        sql = _parse_sql_text(text)
+        if not sql:
+            info["error"] = "no_sql"
+            return None, info
+        try:
+            check_sql(sql)
+            ref_error = _validate_sql_refs(ctx, sql)
+            if ref_error:
+                raise SqlRejected(ref_error)
+            graph_errors = semantic_graph_issues(question, ctx.graph or {}) \
+                if os.environ.get("DATAMATE_SEMANTIC_GRAPH", "1") != "0" else []
+            if graph_errors:
+                raise SqlRejected("; ".join(graph_errors))
+        except SqlRejected as exc:
+            info["rejected"] = str(exc)
+            if attempt == 0:
+                prompt += f"\n\nSQL trước bị từ chối: {exc}. Hãy sinh lại chỉ dùng view v_* và cột đã liệt kê."
+                continue
+            return None, info
+        info["sql"] = sql[:800]
+        res = run_sql(ctx.con, sql)
+        if not res.error:
+            break
         info["sql_error"] = res.error
+        if attempt == 0:
+            prompt += f"\n\nSQL trước lỗi DuckDB: {res.error[:600]}. Hãy sửa SQL và chỉ trả JSON."
+    if res is None or res.error:
         return None, info
     if not res.rows:
         info["empty"] = True
@@ -94,7 +136,8 @@ def _tables_block(ctx: BizContext) -> str:
     try:
         rows = ctx.con.execute(
             "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_schema='main' ORDER BY table_name"
+            "WHERE table_schema='main' AND table_name LIKE 'v_%' "
+            "ORDER BY table_name"
         ).fetchall()
     except Exception:  # noqa: BLE001
         return "(không đọc được)"

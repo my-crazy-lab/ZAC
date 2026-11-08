@@ -41,3 +41,13 @@ def test_generate_closes_client_after_each_call(monkeypatch):
     assert len(created) == 2 and created[0] is not created[1]
     assert closed == created
     assert seen[0] != seen[1]
+
+
+def test_openrouter_disables_reasoning_at_top_level():
+    cfg = SimpleNamespace(LLM_BASE_URL="https://openrouter.ai/api/v1",
+                          LLM_API_KEY="", LLM_MODEL="qwen/qwen3-14b",
+                          LLM_CONCURRENCY=2)
+    llm = LLM(cfg)
+    body = llm._payload("q", None, 128, False)
+    assert body["reasoning"] == {"effort": "none"}
+    assert "extra_body" not in body

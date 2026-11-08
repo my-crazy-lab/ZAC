@@ -16,6 +16,9 @@ FEATURE_NAMES = [
     "metric_revenue", "metric_qty", "metric_orders", "metric_aov",
     "intent_rank", "intent_compare", "intent_aggregate", "out_number", "out_list",
     "out_percent", "out_string", "n_filters", "n_entities",
+    "path_deterministic", "path_spec", "path_sql", "candidate_agreement",
+    "verifier_score", "invariant_failures",
+    "graph_confidence", "graph_issues", "graph_metric_source", "graph_time_source",
 ]
 
 
@@ -25,7 +28,10 @@ def extract_features(question: str, ctx: BizContext, windows: list[TimeWindow],
                      spec_subject: str | None = None,
                      spec_intent: str | None = None,
                      spec_output: str | None = None,
-                     unresolved: list[str] | None = None) -> dict[str, float]:
+                     unresolved: list[str] | None = None,
+                     candidate_path: str | None = None,
+                     candidate_agreement: float = 1.0,
+                     verifier_score: float = 1.0) -> dict[str, float]:
     """Trả vector đặc trưng (giá trị số)."""
     q = nd(question)
     ents = entities or []
@@ -58,6 +64,22 @@ def extract_features(question: str, ctx: BizContext, windows: list[TimeWindow],
         "out_string": 1.0 if spec_output == "string" else 0.0,
         "n_filters": 0.0,
         "n_entities": float(len(ents)),
+        "path_deterministic": 1.0 if candidate_path == "deterministic" else 0.0,
+        "path_spec": 1.0 if candidate_path == "path1_spec" else 0.0,
+        "path_sql": 1.0 if candidate_path == "path2_sql" else 0.0,
+        "candidate_agreement": float(candidate_agreement),
+        "verifier_score": float(verifier_score),
+        "invariant_failures": float(sum(
+            1 for x in (ctx.invariants or {}).values() if not x.get("passed", True)
+        )),
+        "graph_confidence": max(0.0, 1.0 - 0.2 * len((ctx.flags or {}).get("graph_issues", []))),
+        "graph_issues": float(len((ctx.flags or {}).get("graph_issues", []))),
+        "graph_metric_source": 1.0 if ctx.graph and any(
+            n.get("role") in {"line_amount", "order_total", "qty", "qty_base"}
+            for n in ctx.graph.get("nodes", []) if n.get("kind") == "column") else 0.0,
+        "graph_time_source": 1.0 if ctx.graph and any(
+            n.get("role") in {"order_date", "order_ts", "pay_date", "import_date"}
+            for n in ctx.graph.get("nodes", []) if n.get("kind") == "column") else 0.0,
     }
     return feats
 

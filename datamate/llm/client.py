@@ -91,10 +91,14 @@ class LLM:
             }
         elif json_schema is not None:
             body["response_format"] = {"type": "json_object"}
-        # Qwen3-style: tắt suy luận mặc định
-        body["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": bool(thinking)}
-        }
+        # OpenRouter nhận reasoning ở top-level; llama.cpp nhận chat_template_kwargs.
+        base_url = self.urls[0].lower() if self.urls else ""
+        if "openrouter.ai" in base_url:
+            body["reasoning"] = {"effort": "low" if thinking else "none"}
+        else:
+            body["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": bool(thinking)}
+            }
         return body
 
     @staticmethod

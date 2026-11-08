@@ -50,7 +50,8 @@ REGISTRY: dict[str, MetricDef] = {
         is_money=False, default_output="number"),
     "customers": MetricDef(
         name="customers", caps={"customer"}, source="v_orders", date_col="order_date",
-        value_expr="COUNT(DISTINCT s.customer_key) FILTER (WHERE NOT s.is_walkin)",
+        value_expr=("COUNT(DISTINCT COALESCE(NULLIF(s.customer_key, ''), "
+                    "lower(s.customer_name))) FILTER (WHERE NOT s.is_walkin)"),
         subjects={"day", "week", "month", "channel", "window"},
         is_money=False, default_output="number"),
     "aov": MetricDef(

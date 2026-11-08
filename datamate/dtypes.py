@@ -146,6 +146,9 @@ class BizContext:
     verified: bool = True
     business_id: str = ""
     biz_dir: str = ""
+    graph: dict | None = None
+    context: dict | None = None
+    catalog: list | None = None
 
 
 @dataclass

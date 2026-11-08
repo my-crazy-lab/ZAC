@@ -427,3 +427,23 @@ def run_specs(specs: list[Spec], ctx: BizContext, knobs: Knobs,
             debug["sql"] = plan.sql[:400]
             return ans, spec, debug
     return None, None, debug
+
+
+def run_spec_candidates(specs: list[Spec], ctx: BizContext, knobs: Knobs,
+                        windows: list[TimeWindow], as_of, limit: int = 3
+                        ) -> list[tuple[Answer, Spec, dict[str, Any]]]:
+    """Execute up to ``limit`` valid specs; candidates are result-backed."""
+    out: list[tuple[Answer, Spec, dict[str, Any]]] = []
+    for spec in specs:
+        if len(out) >= limit:
+            break
+        if validate_spec(spec, ctx, windows):
+            continue
+        plan = compile_spec(spec, ctx, knobs, windows, as_of)
+        res = run_sql(ctx.con, plan.sql, timeout_s=20, max_rows=1000)
+        if res.error:
+            continue
+        ans = to_submission(plan, res, spec, spec.output, ctx, knobs, windows)
+        if ans.type != "abstain":
+            out.append((ans, spec, {"sql": plan.sql[:400]}))
+    return out

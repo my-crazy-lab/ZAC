@@ -9,7 +9,8 @@ import pytest
 from dtypes import Spec
 from engine.sandbox import SqlRejected, check_sql
 from rules.rulebook_parser import parse_rulebook
-from schema.mapper import parse_readme
+from schema.mapper import parse_readme, parse_readme_facts
+from ingest.reader import cache_key
 
 def _rulebook() -> str:
     return open("train/rulebook.md", encoding="utf-8").read()
@@ -37,6 +38,22 @@ def test_parse_readme_columns():
     key = [k for k in cols if "ban_hang" in k]
     assert key
     assert "ngay thang" in cols[key[0]]
+
+
+def test_parse_readme_facts_keeps_conventions():
+    readme = """## Cột trong `x.csv`\n- **Ngày**: ngày bán\n## Quy ước\n- Voucher là dòng giảm giá.\n- Quy đổi đơn vị: 1 thùng = 6 lon."""
+    facts = parse_readme_facts(readme)
+    assert any("Voucher" in x for x in facts["conventions"])
+    assert facts["unit_rules"]
+    assert "voucher" in facts["special_rows"]
+
+
+def test_cache_key_changes_when_readme_changes(tmp_path):
+    (tmp_path / "data.csv").write_text("a,b\n1,2\n", encoding="utf8")
+    (tmp_path / "README.md").write_text("## Quy ước\n- A", encoding="utf8")
+    before = cache_key(str(tmp_path), "v1")
+    (tmp_path / "README.md").write_text("## Quy ước\n- B", encoding="utf8")
+    assert cache_key(str(tmp_path), "v1") != before
 
 
 def test_sandbox_rejects_write():

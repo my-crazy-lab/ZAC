@@ -246,13 +246,50 @@ def data_files(path: str) -> list[str]:
     return out
 
 
+_CODE_FINGERPRINT: str | None = None
+
+
+def _code_fingerprint() -> str:
+    """Hash mã nguồn ảnh hưởng canonical/view.
+
+    Cache chỉ dựa vào data + README sẽ tái dùng canonical cũ sau khi sửa
+    mapper/canon (đúng loại lỗi làm view mất cột). Hash cả thư mục nguồn để
+    cache tự vô hiệu khi code đổi.
+    """
+    global _CODE_FINGERPRINT
+    if _CODE_FINGERPRINT is not None:
+        return _CODE_FINGERPRINT
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    h = hashlib.sha256()
+    for sub in ("schema", "ingest", "engine"):
+        folder = os.path.join(root, sub)
+        if not os.path.isdir(folder):
+            continue
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            h.update(name.encode("utf-8"))
+            with open(os.path.join(folder, name), "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+    _CODE_FINGERPRINT = h.hexdigest()[:16]
+    return _CODE_FINGERPRINT
+
+
 def cache_key(path: str, schema_version: str) -> str:
-    """sha256 nội dung các file dữ liệu (đã sắp theo tên) + SCHEMA_VERSION."""
+    """sha256 dữ liệu + README + SCHEMA_VERSION + mã nguồn canonical/view."""
     h = hashlib.sha256()
     h.update(schema_version.encode("utf-8"))
+    h.update(_code_fingerprint().encode("utf-8"))
     for f in data_files(path):
         h.update(os.path.basename(f).encode("utf-8"))
         with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    readme = os.path.join(path, "README.md")
+    if os.path.exists(readme):
+        h.update(b"README.md")
+        with open(readme, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 h.update(chunk)
     return h.hexdigest()

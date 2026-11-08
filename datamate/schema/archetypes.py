@@ -31,11 +31,11 @@ DOMAIN_COLUMN_SIGNALS: dict[str, tuple[str, ...]] = {
 
 
 def _files(tables: list[Any]) -> list[str]:
-    return [nd(str(t.source)) for t in tables]
+    return [nd(str(t.source)).replace("_", " ").replace("-", " ") for t in tables]
 
 
 def _tables(tables: list[Any]) -> list[str]:
-    return [nd(str(t.name)) for t in tables]
+    return [nd(str(t.name)).replace("_", " ").replace("-", " ") for t in tables]
 
 
 def _all_columns(tables: list[Any]) -> set[str]:
@@ -63,9 +63,16 @@ def detect_archetype(tables: list[Any]) -> tuple[str, float]:
 
     # --- ngành mới (dấu hiệu cột)
     for code, signals in DOMAIN_COLUMN_SIGNALS.items():
-        hits = sum(1 for s in signals if any(s in c for c in cols))
-        if hits >= 2:
-            return code, min(1.0, 0.5 + 0.2 * hits)
+        matched = {s for s in signals if any(s in c for c in cols)}
+        # "Biển số xe" là thuộc tính giao hàng của retail, không đủ để kết
+        # luận đây là dữ liệu sửa xe. Cần hai tín hiệu khác nhau, trong đó
+        # H_repair phải có ít nhất một tín hiệu nghiệp vụ sửa chữa.
+        if code == "H_repair":
+            strong = {"loi sua xe", "phuong thuc sua chua", "tac phong", "mau xe"}
+            if not matched & strong:
+                continue
+        if len(matched) >= 2:
+            return code, min(1.0, 0.5 + 0.2 * len(matched))
 
     # --- D_erp: nhiều file, có hoá đơn/chi tiết/sản phẩm/khách/nhập/quỹ/tồn
     d_signals = ["hoa don", "chi tiet", "san pham", "khach hang", "nhap hang",

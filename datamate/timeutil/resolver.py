@@ -124,7 +124,8 @@ def _months_from_list(text: str) -> list[tuple[int, int]]:
     m = re.search(r"(?:tu|từ)\s+thang\s+(\d{1,2})\s*/\s*(\d{4})\s+"
                   r"(?:den|đến|toi|tới)\s+thang\s+(\d{1,2})\s*/\s*(\d{4})", text)
     if m and re.search(r"thang sau|moi thang|tung thang|tang lien tuc|giam lien tuc"
-                       r"|luon (cao|thap) hon|cao hon thang truoc|thap hon thang truoc",
+                       r"|luon (cao|thap) hon|cao hon thang truoc|thap hon thang truoc"
+                       r"|thang nao",
                        text):
         y, mo = int(m.group(2)), int(m.group(1))
         ey, emo = int(m.group(4)), int(m.group(3))
@@ -307,7 +308,7 @@ def _c_day_explicit(text: str) -> list[Cue]:
 def _c_quy_named(text: str) -> list[Cue]:
     """``quý 4/2025`` hoặc ``quý 4 năm 2025``."""
     out: list[Cue] = []
-    for m in re.finditer(r"\bquy\s+(\d)(?:\s*/\s*(\d{4}))?", text):
+    for m in re.finditer(r"\bquy[s]?\s+(\d)(?:\s*/\s*(\d{4}))?", text):
         q = int(m.group(1))
         if q < 1 or q > 4:
             continue
@@ -330,7 +331,7 @@ def _c_quy_named(text: str) -> list[Cue]:
 
 def _c_quy(text: str) -> list[Cue]:
     out: list[Cue] = []
-    for m in re.finditer(r"\bquy\s+(nay|roi|truoc)\b", text):
+    for m in re.finditer(r"\bquy[s]?\s+(nay|roi|truoc)\b", text):
         kind = m.group(1)
 
         def build(as_of: date, _knobs: Knobs, _cal: Calendar, _k: str = kind) -> TimeWindow:
@@ -416,10 +417,41 @@ def _c_thu(text: str) -> list[Cue]:
     return out
 
 
+def _c_ytd(text: str) -> list[Cue]:
+    """``từ đầu năm/1/1 đến hết hôm nay`` → cửa sổ lũy kế đầu năm."""
+    out: list[Cue] = []
+    patterns = [
+        re.compile(r"\b(?:tu\s+)?dau nam\b(?:\s+(?:den|toi|qua)\s+"
+                   r"(?:het\s+)?(?:hom nay|hnay|nay))?"),
+        re.compile(r"\btu\s+(?:ngay\s+)?(?:1[/\-.]1|thang 1)"
+                   r"(?:[/\-.](\d{4}))?\s+(?:den|toi|qua)\s+"
+                   r"(?:het\s+)?(?:hom nay|hnay|nay)\b"),
+    ]
+    for pat in patterns:
+        for m in pat.finditer(text):
+            year = None
+            if m.groups():
+                try:
+                    year = int(m.group(1))
+                except (TypeError, ValueError):
+                    year = None
+
+            def build(as_of: date, _knobs: Knobs, _cal: Calendar,
+                      _y: int | None = year) -> TimeWindow:
+                y = _y or as_of.year
+                return TimeWindow(label="main", start=date(y, 1, 1), end=as_of,
+                                  kind="cumulative")
+
+            out.append(Cue(pos=m.start(), end=m.end(), kind="ytd", build=build,
+                           raw=m.group(0)))
+    return out
+
+
 def _c_hom(text: str) -> list[Cue]:
     out: list[Cue] = []
-    for m in re.finditer(r"\bhom\s+(nay|qua)\b", text):
-        kind = m.group(1)
+    for m in re.finditer(r"\b(?:hom\s+(nay|qua)|hnay|hqua)\b", text):
+        raw = m.group(0)
+        kind = "nay" if "nay" in raw else "qua"
 
         def build(as_of: date, _knobs: Knobs, _cal: Calendar, _k: str = kind) -> TimeWindow:
             if _k == "nay":
@@ -433,6 +465,7 @@ def _c_hom(text: str) -> list[Cue]:
 
 # Thứ tự quét: cụm dài/đặc thù trước
 _CUE_BUILDERS: list[Callable[[str], list[Cue]]] = [
+    _c_ytd,
     _c_thang_list,
     _c_day_explicit,
     _c_quy_named,

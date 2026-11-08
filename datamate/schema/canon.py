@@ -22,7 +22,10 @@ CANCELLED_WORDS = ("huy", "cancel", "void", "that bai", "failed")
 # "Đã hoàn thành" KHÔNG phải trả hàng ⇒ kiểm tra "hoàn hàng" trước "hoàn"
 RETURNED_WORDS = ("hoan hang", "doi tra", "tra hang", "tra lai", "hoan tra",
                   "return", "refund", "returned", "tra ve", "bi tra")
-SERVICE_RE = re.compile(r"phi phuc vu|phi dich vu|service|phu phi", re.IGNORECASE)
+SERVICE_RE = re.compile(
+    r"phi phuc vu|phi dich vu|phi ship|shipping|service|phu phi|voucher|dung diem",
+    re.IGNORECASE,
+)
 WALKIN_RE = re.compile(r"khach le|vang lai|khach vang lai|khong ten", re.IGNORECASE)
 # tên khách lẻ (rulebook §6): "Khách lẻ", "lẻ", "kl", "Khách vãng lai"
 WALKIN_NAMES = {"le", "khach le", "kl", "vang lai", "khach vang lai", "khong ten",
@@ -36,6 +39,10 @@ CANON_ORDERS_COLS = ["order_id", "order_date", "order_ts", "customer_key",
                      "customer_name", "status_raw", "channel", "pay_method",
                      "employee", "order_total", "shipping_fee", "vat_amount",
                      "vat_rate", "order_voucher", "order_debt_total", "order_paid"]
+# Cột dẫn xuất luôn phải tồn tại, kể cả khi bảng rỗng — view v_orders_all
+# chọn đủ các cột này nên thiếu một cột là toàn bộ v_* phía sau biến mất.
+ORDER_BOOL_COLS = ["is_cancelled", "has_return", "is_returned",
+                   "is_cod", "is_marketplace", "is_walkin"]
 CANON_PRODUCTS_COLS = ["product_code", "product_name", "category", "unit", "unit_cost"]
 CANON_CUSTOMERS_COLS = ["customer_key", "customer_name", "phone", "customer_group",
                         "customer_since", "is_walkin"]
@@ -269,16 +276,31 @@ def _build_lines(by_name: dict[str, Any], lines_info: dict[str, Any] | None,
 
 # ---------------------------------------------------------------- c_orders
 
+def _finalize_orders(orders: pd.DataFrame) -> pd.DataFrame:
+    """Ép c_orders về schema cố định (kể cả khi rỗng) và bỏ cột trùng."""
+    if orders.columns.duplicated().any():
+        orders = orders.loc[:, ~orders.columns.duplicated()]
+    for col in CANON_ORDERS_COLS:
+        if col not in orders.columns:
+            orders[col] = None
+    for col in ORDER_BOOL_COLS:
+        if col not in orders.columns:
+            orders[col] = False
+        else:
+            orders[col] = orders[col].fillna(False).astype(bool)
+    return orders[CANON_ORDERS_COLS + ORDER_BOOL_COLS].reset_index(drop=True)
+
+
 def _build_orders(by_name: dict[str, Any], orders_info: dict[str, Any] | None,
                   c_lines: pd.DataFrame, lines_info: dict[str, Any] | None
                   ) -> pd.DataFrame:
     if not orders_info:
         # suy c_orders từ c_lines (bảng phẳng: không có bảng đơn riêng)
         if c_lines.empty:
-            return pd.DataFrame(columns=CANON_ORDERS_COLS)
+            return _finalize_orders(pd.DataFrame())
         have_date = "order_date" in c_lines.columns and c_lines["order_date"].notna().any()
         if not have_date:
-            return pd.DataFrame(columns=CANON_ORDERS_COLS)
+            return _finalize_orders(pd.DataFrame())
         agg = (c_lines.sort_values("order_date")
                .drop_duplicates(subset=["order_id"], keep="first"))
         orders = pd.DataFrame(index=range(len(agg)))
@@ -298,9 +320,7 @@ def _build_orders(by_name: dict[str, Any], orders_info: dict[str, Any] | None,
         for col in CANON_ORDERS_COLS:
             if col not in orders.columns:
                 orders[col] = None
-        keep = CANON_ORDERS_COLS + ["is_cancelled", "has_return", "is_returned",
-                                    "is_cod", "is_marketplace", "is_walkin"]
-        return orders[keep].reset_index(drop=True)
+        return _finalize_orders(orders)
 
     cols = orders_info["cols"]
     frames: list[pd.DataFrame] = []
@@ -327,7 +347,7 @@ def _build_orders(by_name: dict[str, Any], orders_info: dict[str, Any] | None,
             part[role] = s.reset_index(drop=True) if s is not None else _empty(n)
         frames.append(part)
     if not frames:
-        return pd.DataFrame(columns=CANON_ORDERS_COLS)
+        return _finalize_orders(pd.DataFrame())
     orders = pd.concat(frames, ignore_index=True)
 
     # --- order_date: thiếu ⇒ lấy từ order_ts
@@ -379,7 +399,7 @@ def _build_orders(by_name: dict[str, Any], orders_info: dict[str, Any] | None,
     orders["is_marketplace"] = _pay_flag(orders, ("shopee", "lazada", "tiktok", "tmdt",
                                                    "san thuong mai", "s marketplace"))
     orders["is_walkin"] = orders["customer_name"].map(_is_walkin)
-    return orders.reset_index(drop=True)
+    return _finalize_orders(orders)
 
 
 def _is_walkin(value: Any) -> bool:
@@ -517,9 +537,19 @@ def _build_units(by_name: dict[str, Any], info: dict[str, Any] | None,
             part = pd.DataFrame(index=range(n))
             pc = _text(df, cols, "product_code")
             pn = _text(df, cols, "product_name")
+            # Một số danh mục quy đổi gọi mặt hàng đơn giản là "Hàng";
+            # mapper có thể gán nó vào unit_name vì product_name thuộc
+            # namespace lines. Khôi phục theo cấu trúc của bảng quy đổi.
+            if pc is None and pn is None and "unit_name" in cols:
+                pn = _text(df, {"product_name": cols["unit_name"]}, "product_name")
             part["product_code"] = pc.reset_index(drop=True) if pc is not None else (
                 pn.reset_index(drop=True) if pn is not None else _empty(n))
             un = _text(df, cols, "unit_name")
+            if "unit_name" in cols and nd(str(cols["unit_name"])) in ("hang", "san pham"):
+                large = next((c for c in df.columns
+                              if "dv lon" in nd(str(c)) or "don vi lon" in nd(str(c))), None)
+                if large is not None:
+                    un = _text(df, {"unit_name": large}, "unit_name")
             part["unit_name"] = un.reset_index(drop=True) if un is not None else _empty(n)
             uf = _num(df, cols, "unit_factor")
             part["unit_factor"] = uf.reset_index(drop=True) if uf is not None else _empty(n)

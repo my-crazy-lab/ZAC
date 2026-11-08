@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from dtypes import Answer, AnswerType, BizContext, CompiledPlan, ExecResult, Knobs, Spec, TimeWindow
+from text.normalize import nd
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ def _dec(x: Any) -> Decimal | None:
     if x is None or isinstance(x, bool):
         return None
     try:
-        return Decimal(str(x))
+        value = Decimal(str(x))
+        return value if value.is_finite() else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -43,6 +45,23 @@ def _label_to_date(label: Any, windows: list[TimeWindow] | None) -> str | None:
             and win.end.day == _month_days(win.end)):
         return win.start.strftime("%Y-%m")
     return win.start.isoformat()
+
+
+def _canonical_text(value: Any, ctx: BizContext | None) -> str:
+    """Map accentless/model text back to the exact business value."""
+    text = str(value)
+    if ctx is None:
+        return text
+    candidates = []
+    index = getattr(ctx, "entity_index", None)
+    candidates.extend(name for _kind, name, _code in getattr(index, "entries", []))
+    for values in (ctx.value_dict or {}).values():
+        candidates.extend(values or [])
+    key = nd(text)
+    for candidate in candidates:
+        if nd(candidate) == key:
+            return str(candidate)
+    return text
 
 
 def _month_days(d) -> int:
@@ -106,7 +125,7 @@ def to_submission(plan: CompiledPlan, result: ExecResult, spec: Spec | None,
             mapped = _label_to_date(label, windows)
             if mapped is not None:
                 return Answer(type=AnswerType.DATE.value, value=mapped)
-        return Answer(type=AnswerType.STRING.value, value=str(label))
+        return Answer(type=AnswerType.STRING.value, value=_canonical_text(label, ctx))
     if post == "series_values":
         values: list[Any] = []
         for r in rows:
@@ -183,7 +202,7 @@ def to_submission(plan: CompiledPlan, result: ExecResult, spec: Spec | None,
             if _tie_at(rows, limit):
                 return Answer(type=AnswerType.ABSTAIN.value)
         picked = rows[:limit] if limit else rows
-        values = [_list_item(r, cols) for r in picked]
+        values = [_list_item(r, cols, ctx) for r in picked]
         return Answer(type=AnswerType.LIST.value, value=values)
 
     if out_type == AnswerType.TABLE.value:
@@ -222,7 +241,7 @@ def _tie_at(rows: list[tuple], limit: int) -> bool:
     return a == b
 
 
-def _list_item(row: tuple, cols: list[str]) -> Any:
+def _list_item(row: tuple, cols: list[str], ctx: BizContext | None = None) -> Any:
     """Phần tử của list: số nếu là số, chuỗi nếu là tên."""
     if not row:
         return None
@@ -231,7 +250,7 @@ def _list_item(row: tuple, cols: list[str]) -> Any:
         return float(_round(Decimal(str(val)), "0.01"))
     if hasattr(val, "isoformat"):
         return val.isoformat()
-    return str(val)
+    return _canonical_text(val, ctx)
 
 
 def _table_cell(value: Any) -> Any:

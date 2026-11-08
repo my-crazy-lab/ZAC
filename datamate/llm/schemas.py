@@ -47,6 +47,20 @@ SPEC_SCHEMA = {
     "additionalProperties": False,
 }
 
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "template_id": {"type": "string"},
+        "params": {"type": "object"},
+        "filters": {"type": "array", "items": FILTER_SCHEMA},
+        "time": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number"},
+        "evidence": {"type": "string"},
+    },
+    "required": ["template_id", "params", "filters", "time", "confidence"],
+    "additionalProperties": False,
+}
+
 ANSWER_SCHEMA = {
     "type": "object",
     "properties": {

@@ -77,7 +77,10 @@ def _build_samples(split: str, scope: str, limit: int | None):
                                  spec.metric if spec else None,
                                  spec.subject if spec else None,
                                  spec.intent if spec else None,
-                                 spec.output if spec else None)
+                                 spec.output if spec else None,
+                                 candidate_path="deterministic",
+                                 candidate_agreement=1.0,
+                                 verifier_score=1.0 if ans is not None else 0.0)
         ref = answers.get(q.id)
         ok = bool(ans and ref and is_correct(ans, ref))
         samples.append((feats, 1 if ok else 0))
