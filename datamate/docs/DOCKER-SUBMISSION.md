@@ -2,6 +2,9 @@
 
 Mô tả solution để dán form: [`SOLUTION_DESCRIPTION.md`](SOLUTION_DESCRIPTION.md).
 
+> **2026-11-09:** tạm hoãn Docker, hiện chỉ nộp JSONL public. Image/archive trên
+> server đã xoá; service LLM vẫn chạy. Xem [`SUBMISSION-LOG.md`](SUBMISSION-LOG.md).
+
 ## Đã xong
 
 | Hạng mục | Trạng thái |
