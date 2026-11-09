@@ -58,9 +58,32 @@ dù `schema_conf` cũ là 0.95.
 File test leaderboard: `public_test/submission_dev_006_v2.jsonl` (16 câu).
 So sánh với bản cũ `dev_006` (-0.029).
 
+## Regression 100 câu train (phát hiện sau khi sửa)
+
+Lần chạy đầu với mapping mới: **41 đúng / 41 sai / 18 bỏ, PA 0.0** (baseline 51/34/15,
+0.17). Nguyên nhân không phải revenue mà là **chọn sai bảng dòng bán**:
+
+- `danhsachchitietnhaphang` (chi tiết nhập) bị chọn làm `lines` vì hint chỉ giới hạn
+  role, chưa giới hạn entity.
+- Hệ quả: `v_lines` rỗng/không join được `v_orders` → `orders.threshold = 0`,
+  `orders.total` sai; toàn bộ 10 câu mất điểm nằm ở `biz_106`.
+- `ban_hang` (bảng phẳng) bị hint chỉ `lines/orders`, làm mất entity `products/customers`
+  của `biz_101` → 3 câu qty/top bị abstain.
+
+Sửa:
+1. Hint cụ thể `chitietnhap`, `hoadonchitiet`, `hoadon`, `tonkho`, `nhaphang`, ...;
+   chi tiết hoá đơn đứng trước hoá đơn chung.
+2. **Chỉ xét entity thuộc hint** khi fit bảng (chi tiết nhập không thể thành lines).
+3. Bảng phẳng `ban_hang` giữ thêm `products/customers`.
+
+Kết quả 100 câu cuối: **51 đúng / 35 sai / 14 bỏ, PA 0.16** — bằng baseline về số câu
+đúng; 1 câu `q_bfa` (“bao nhiêu sp có mặt trong ít nhất 145 bill”) bị planner chọn
+`orders.total` thay vì bỏ/đếm sản phẩm. Đây là lỗi planner, không phải mapping.
+
 ## Việc tiếp theo
 
 - Train lại calibration trên feature mới (nhiều câu đúng bị abstain do `p_trong_thap`).
+- Bổ sung template/guard “đếm sản phẩm theo số bill/đơn tối thiểu” (`q_bfa`).
 - Bổ sung `returns` (`tra_hang`), `thong_tin_thuoc.BanTheoDon`, `nhan_vien.TenGoi`,
   `lich_su_gia`; `stock_value` phải nhân tồn với giá vốn.
 - Đo lại trên train holdout và dev_006 trước khi mở coverage.

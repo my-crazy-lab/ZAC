@@ -63,6 +63,18 @@ TABLES = [
         "SoTienThu": [50],
         "PhuongThuc": ["cash"],
     }),
+    _t("pos_phieu_nhap", {
+        "MaPhieuNhap": ["PN1"],
+        "NgayNhapKho": ["2025-01-01"],
+        "TongGiaTriNhap": [100],
+        "TinhTrang": ["completed"],
+    }),
+    _t("pos_chi_tiet_nhap", {
+        "MaPhieuNhap": ["PN1"],
+        "MaHangHoa": ["SP1"],
+        "SLNhapQuyDoi": [5],
+        "DonGiaNhap": [10],
+    }),
 ]
 
 
@@ -81,6 +93,7 @@ def test_pos_mapping_uses_display_names_and_status():
     assert ent["products"]["cols"]["category"] == "DanhMuc"
     assert ent["products"]["cols"]["unit_cost"] == "GiaVonHang"
     assert ent["lines"]["cols"]["unit_cost"] == "GiaVonLucBan"
+    assert ent["lines"]["table"] == "pos_chi_tiet_don"
     assert "inventory" in ent and "payments" in ent
 
 

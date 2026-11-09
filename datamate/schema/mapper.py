@@ -33,19 +33,22 @@ NAME_MIN_SCORE = 0.78
 # Tên bảng gợi ý entity — tránh role chéo giữa các bảng (TinhTrang của đơn
 # không bị import_status lấy, TenGoi của khách không bị role khác lấy).
 TABLE_ENTITY_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
-    (("chi tiet don", "chi tiet ban", "chi tiet hoa don"), ("lines",)),
-    (("chi tiet nhap",), ("imports", "lots")),
+    # chi tiết hoá đơn phải đứng trước hoá đơn chung
+    (("chi tiet hoa don", "hoa don chi tiet", "hoadonchitiet",
+      "chi tiet don", "chi tiet ban"), ("lines",)),
+    (("chi tiet nhap", "chitietnhap"), ("imports", "lots")),
     (("don hang", "hoa don", "hoadon"), ("orders",)),
-    (("ban hang", "so ban", "phieu ban"), ("lines", "orders")),
+    # bảng bán hàng phẳng: dòng bán + thuộc tính đơn + danh mục SP/khách ngay trên dòng
+    (("ban hang", "so ban", "phieu ban"), ("lines", "orders", "products", "customers")),
     (("khach",), ("customers",)),
-    (("san pham", "hang hoa", "danh muc"), ("products",)),
-    (("the kho", "ton kho", "ton cuoi"), ("inventory",)),
-    (("thanh toan", "phieu thu", "thu tien"), ("payments",)),
-    (("phieu nhap", "nhap hang", "so nhap"), ("imports",)),
-    (("lo hang",), ("lots",)),
-    (("tra hang",), ("returns",)),
-    (("don vi", "quy doi"), ("units",)),
-    (("lich su gia", "bang gia"), ("price_history",)),
+    (("san pham", "sanpham", "hang hoa", "danh muc"), ("products",)),
+    (("the kho", "thekho", "ton kho", "tonkho", "ton cuoi"), ("inventory",)),
+    (("thanh toan", "thanhtoan", "phieu thu", "thu tien", "soquy"), ("payments",)),
+    (("phieu nhap", "nhap hang", "nhaphang", "so nhap"), ("imports",)),
+    (("lo hang", "lohang"), ("lots",)),
+    (("tra hang", "trahang"), ("returns",)),
+    (("don vi", "donvi", "quy doi"), ("units",)),
+    (("lich su gia", "lichsugia", "bang gia"), ("price_history",)),
     (("giao hang", "van chuyen", "delivery"), ("deliveries",)),
 )
 
@@ -317,6 +320,10 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
         global_assigned = _assign(scores, role_names)
         fits: dict[str, tuple[float, dict[str, tuple[str, float]]]] = {}
         for entity in ENTITY_REQUIRED:
+            # bảng đã được nhận diện theo tên thì không được "nhảy" sang entity khác
+            # (ví dụ chi tiết nhập hàng không được chọn làm bảng bán hàng).
+            if hint and entity not in hint:
+                continue
             fit, assigned = _entity_fit(scores, entity, global_assigned)
             if fit >= ENTITY_THRESHOLD:
                 fits[entity] = (fit, assigned)
