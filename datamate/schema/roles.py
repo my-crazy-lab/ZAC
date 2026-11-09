@@ -50,13 +50,15 @@ ROLE_DEFS: list[RoleDef] = [
     _r("order_id", "ma don|ma hoa don|so hoa don|ma chung tu|so chung tu|ma phieu"
        "|ma don hang|ma giao dich|id don|ma hdd|ma bill|ma don hang", "id", "orders", True),
     _r("order_date", "ngay ban|ngay dat hang|ngay giao dich|ngay hoa don|ngay hdd|ngay dat"
-       "|ngay thang|ngay cua don|ngay tao don|ngay cua phieu|ngay dat hang", "date", "orders", True),
+       "|ngay thang|ngay cua don|ngay tao don|ngay cua phieu|ngay dat hang"
+       "|ngay lap|ngay lap hoa don", "date", "orders", True),
     _r("order_ts", "thoi diem dat don|thoi gian dat don|thoi gian tao don|gio tao don"
        "|gio dat don|thoi gian|gio ban|gio giao dich", "ts", "orders"),
     _r("status_raw", "trang thai don|trang thai don hang|trang thai|xu ly|ket qua"
-       "|trang thai xu ly|status|trang thai giao dich|trang thai hdd", "str", "orders"),
+       "|trang thai xu ly|status|trang thai giao dich|trang thai hdd"
+       "|tinh trang|tinh trang don", "str", "orders"),
     _r("customer_name", "ten khach|khach hang|doi tac|ben mua|khach le si|ho ten khach"
-       "|ten khach hang|khach le|ten khach thanh vien", "str", "orders"),
+       "|ten khach hang|khach le|ten khach thanh vien|ten goi", "str", "orders"),
     _r("customer_key", "ma khach|so kh|ma khach hang|ma so khach|code khach hang", "id", "orders"),
     _r("channel", "kenh ban|nguon ban|ban qua|kenh|kenh ban hang", "str", "orders"),
     _r("pay_method", "hinh thuc thanh toan|phuong thuc thanh toan|phuong thuc tt"
@@ -83,7 +85,7 @@ ROLE_DEFS: list[RoleDef] = [
        "|ma hh lien quan", "id", "lines"),
     _r("product_name", "ten hang hoa|ten san pham|ten san pham ban|ten hang|ten mon"
        "|noi dung|mat hang|ten hh|hang ban|ten mat hang|san pham|ten hoa"
-       "|ten sp|ten sp ban", "str", "lines", True),
+       "|ten sp|ten sp ban|ten goi", "str", "lines", True),
     _r("qty", "so luong|sl", "num", "lines", True),
     _r("qty_base", "so luong da doi ra don vi co ban|so luong quy doi|quy ra don vi le"
        "|quy ra dv le|sl quy doi|so luong don vi co ban|so luong ban lay tu lo"
@@ -95,7 +97,7 @@ ROLE_DEFS: list[RoleDef] = [
     _r("line_discount", "giam gia|chiet khau|khau tru|tien giam cua ca dong", "money", "lines"),
     _r("line_amount", "thanh tien sau giam|thanh tien|tong tien|tri gia|t.tien"
        "|gia tri dong|tong thanh tien", "money", "lines", True),
-    _r("line_cost_total", "gia von", "money", "lines"),
+    _r("line_cost_total", "tong gia von|gia von ca dong|thanh tien von|gia von", "money", "lines"),
     _r("return_flag", "co tra hang|tra hang|hoan hang", "flag", "lines"),
     _r("return_qty", "so luong khach tra lai|so luong tra|sl tra hang|so luong hoan"
        "|so luong hoan tra", "num", "lines"),
@@ -103,20 +105,22 @@ ROLE_DEFS: list[RoleDef] = [
 
     # ---- danh mục hàng
     _r("category", "nhom hang hoa|nhom hang|nhom san pham|loai hang hoa|hang muc"
-       "|loai san pham|nhom", "str", "products"),
-    _r("unit", "don vi co ban|don vi goc|don vi chuan|don vi le", "str", "products"),
+       "|loai san pham|nhom|danh muc", "str", "products"),
+    _r("unit", "don vi co ban|don vi goc|don vi chuan|don vi le|don vi co so",
+       "str", "products"),
     _r("unit_cost", "gia von danh muc|gia von co ban|gia von hang hoa|gia von hang"
-       "|gia von don vi co ban", "money", "products"),
+       "|gia von don vi co ban|gia von luc ban|gia von don vi|gia von mot don vi",
+       "money", "products"),
 
     # ---- khách hàng
     _r("phone", "so dien thoai|dien thoai|sdt|phone", "str", "customers"),
     _r("customer_group", "nhom khach hang|nhom khach|loai hinh khach|phan loai khach"
-       "|khach le si", "str", "customers"),
+       "|khach le si|loai khach hang|loai khach", "str", "customers"),
     _r("customer_since", "ngay dang ky|ngay tao khach|ngay tao mat hang|tu ngay", "date", "customers"),
 
     # ---- thanh toán
     _r("pay_date", "thoi diem thu|ngay thu|thoi gian thu|ngay nhan tien|ngay ghi no"
-       "|ngay thanh toan", "date", "payments", True),
+       "|ngay thanh toan|ngay gio thu", "date", "payments", True),
     _r("pay_amount", "so tien thu|so tien tien|gia tri thu|gia tri", "money", "payments", True),
     _r("pay_ref", "ma phieu thu|so phieu thu|ma bien nhan|ma phieu", "id", "payments"),
 
@@ -126,7 +130,8 @@ ROLE_DEFS: list[RoleDef] = [
     _r("lot_qty", "so luong lo|sl lot|ton lo|so luong con", "num", "lots"),
     _r("lot_cost", "gia von lot|gia nhap lot|gia von", "money", "lots"),
     _r("expiry_date", "han su dung|hsd|han dung|ngay het han", "date", "lots"),
-    _r("inv_date", "ngay ton|ngay bao cao|ngay kiem ke|ngay ton kho|ngay cuoi ky", "date", "inventory"),
+    _r("inv_date", "ngay ton|ngay bao cao|ngay kiem ke|ngay ton kho|ngay cuoi ky"
+       "|ngay gio phat sinh|ngay phat sinh", "date", "inventory"),
     _r("inv_qty", "ton cuoi ky|ton cuoi|ton kho|ton thuc|so luong ton|ton tai thoi diem",
        "num", "inventory"),
 
@@ -135,7 +140,7 @@ ROLE_DEFS: list[RoleDef] = [
     _r("import_date", "ngay phieu|ngay nhap hang|ngay nhap", "date", "imports", True),
     _r("import_amount", "tong tien phieu nhap|tong tien cua ca phieu|tong tien phieu"
        "|tien nhap cua ca dong|tong tien cua phieu|can tra ncc", "money", "imports"),
-    _r("import_status", "trang thai phieu nhap|trang thai phieu", "str", "imports"),
+    _r("import_status", "trang thai phieu nhap|trang thai phieu|tinh trang", "str", "imports"),
     _r("supplier", "nha cung cap|ma nha cung cap|ncc|nha sx", "str", "imports"),
 
     # ---- quy đổi đơn vị
@@ -157,7 +162,7 @@ LINES_EXTRA_ROLES = ("order_id",)
 
 ENTITY_ROLES: dict[str, tuple[str, ...]] = {
     "lines": ("order_id", "line_no", "product_code", "product_name", "qty", "qty_base", "unit_name",
-              "unit_price", "line_discount", "line_amount", "line_cost_total",
+              "unit_price", "line_discount", "line_amount", "line_cost_total", "unit_cost",
               "return_flag", "return_qty", "size"),
     "orders": ("order_id", "order_date", "order_ts", "status_raw", "customer_name",
                "customer_key", "channel", "pay_method", "employee", "order_total",

@@ -51,12 +51,17 @@ def build_views(con: Any, knobs: Knobs, flags: dict[str, Any]) -> None:
     if "c_orders" in tables:
         _safe_exec(con, """
             CREATE OR REPLACE VIEW v_orders_all AS
-            SELECT order_id, order_date, order_ts, customer_key, customer_name,
-                   status_raw, channel, pay_method, employee,
-                   is_cancelled, is_returned, has_return, is_cod, is_marketplace,
-                   is_walkin, order_total, order_debt_total, order_paid,
-                   shipping_fee, vat_amount, order_voucher
-            FROM c_orders
+            SELECT o.order_id, o.order_date, o.order_ts, o.customer_key,
+                   COALESCE(NULLIF(o.customer_name, ''), c.customer_name) AS customer_name,
+                   o.status_raw, o.channel, o.pay_method, o.employee,
+                   o.is_cancelled, o.is_returned, o.has_return, o.is_cod,
+                   o.is_marketplace,
+                   COALESCE(c.is_walkin, o.is_walkin) AS is_walkin,
+                   c.customer_group AS customer_group,
+                   o.order_total, o.order_debt_total, o.order_paid,
+                   o.shipping_fee, o.vat_amount, o.order_voucher
+            FROM c_orders o
+            LEFT JOIN c_customers c ON o.customer_key = c.customer_key
         """)
         conds = []
         if knobs.exclude_cancelled:
@@ -86,8 +91,12 @@ def build_views(con: Any, knobs: Knobs, flags: dict[str, Any]) -> None:
         _safe_exec(con, f"""
             CREATE OR REPLACE VIEW v_lines AS
             SELECT l.order_id, o.order_date, o.order_ts, l.line_no,
-                   l.product_code, l.product_name, p.category,
-                   o.customer_key, o.customer_name, o.is_walkin,
+                   l.product_code,
+                   COALESCE(NULLIF(l.product_name, ''), p.product_name) AS product_name,
+                   p.category,
+                   o.customer_key,
+                   COALESCE(NULLIF(o.customer_name, ''), c.customer_name) AS customer_name,
+                   COALESCE(c.is_walkin, o.is_walkin) AS is_walkin,
                    o.channel, o.pay_method, o.employee, c.customer_group,
                    l.qty, l.qty_base, l.unit_name, p.unit AS base_unit,
                    {net} AS line_amount_net,
@@ -121,8 +130,12 @@ def build_views(con: Any, knobs: Knobs, flags: dict[str, Any]) -> None:
         _safe_exec(con, """
             CREATE OR REPLACE VIEW v_lines_all AS
             SELECT l.order_id, o.order_date, o.order_ts, l.line_no,
-                   l.product_code, l.product_name, p.category,
-                   o.customer_key, o.customer_name, o.is_walkin,
+                   l.product_code,
+                   COALESCE(NULLIF(l.product_name, ''), p.product_name) AS product_name,
+                   p.category,
+                   o.customer_key,
+                   COALESCE(NULLIF(o.customer_name, ''), c.customer_name) AS customer_name,
+                   COALESCE(c.is_walkin, o.is_walkin) AS is_walkin,
                    o.channel, o.pay_method, o.employee, c.customer_group,
                    l.qty, l.qty_base, l.unit_name, p.unit AS base_unit,
                    COALESCE(l.line_amount, 0) AS line_amount_net,

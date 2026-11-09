@@ -204,6 +204,8 @@ def _build_lines(by_name: dict[str, Any], lines_info: dict[str, Any] | None,
         part["line_amount"] = amt.reset_index(drop=True) if amt is not None else _empty(n)
         cost = _num(df, cols, "line_cost_total")
         part["line_cost_total"] = cost.reset_index(drop=True) if cost is not None else _empty(n)
+        uc = _num(df, cols, "unit_cost")
+        part["unit_cost"] = uc.reset_index(drop=True) if uc is not None else _empty(n)
         rq = _num(df, cols, "return_qty")
         part["return_qty"] = rq.reset_index(drop=True) if rq is not None else _empty(n)
         size = _text(df, cols, "size")
@@ -252,7 +254,7 @@ def _build_lines(by_name: dict[str, Any], lines_info: dict[str, Any] | None,
 
     # --- qty_base: nếu thiếu ⇒ qty × hệ số quy đổi (theo mã hàng + đơn vị)
     for col in ("qty", "qty_base", "unit_price", "line_amount", "line_discount",
-                "line_cost_total", "return_qty"):
+                "line_cost_total", "unit_cost", "return_qty"):
         if col in lines.columns:
             lines[col] = pd.to_numeric(lines[col], errors="coerce")
     if c_units is not None and not c_units.empty:
@@ -267,6 +269,14 @@ def _build_lines(by_name: dict[str, Any], lines_info: dict[str, Any] | None,
             qty_num = pd.to_numeric(lines["qty"], errors="coerce")
             lines["qty_base"] = (qty_num * factor).where(factor.notna())
             lines["_key"] = None
+    # --- line_cost_total: nếu chỉ có giá vốn một đơn vị thì nhân với qty_base
+    if "unit_cost" in lines.columns:
+        unit_cost = pd.to_numeric(lines["unit_cost"], errors="coerce")
+        qty_cost = pd.to_numeric(lines["qty_base"], errors="coerce")
+        qty_cost = qty_cost.where(qty_cost.notna(), pd.to_numeric(lines["qty"], errors="coerce"))
+        computed = unit_cost * qty_cost
+        current = pd.to_numeric(lines["line_cost_total"], errors="coerce")
+        lines["line_cost_total"] = current.where(current.notna(), computed)
     extra = [c for c in ("order_date", "order_ts") if c in lines.columns]
     for c in CANON_LINES_COLS:
         if c not in lines.columns:
@@ -641,6 +651,8 @@ def _build_inventory(by_name: dict[str, Any], info: dict[str, Any] | None) -> pd
     inv["inv_date"] = idt.reset_index(drop=True) if idt is not None else _empty(n)
     q = _num(df, cols, "inv_qty")
     inv["inv_qty"] = q.reset_index(drop=True) if q is not None else _empty(n)
+    lot = _text(df, cols, "lot_id")
+    inv["lot_id"] = lot.reset_index(drop=True) if lot is not None else _empty(n)
     return inv[CANON_INVENTORY_COLS].reset_index(drop=True)
 
 

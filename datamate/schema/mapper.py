@@ -30,6 +30,34 @@ COLUMN_MIN_SCORE = 0.5
 NAME_MIN_SCORE = 0.78
 
 # Ưu tiên bảng theo tên (để phá vỡ hòa) — theo *tên*, không theo business_id
+# Tên bảng gợi ý entity — tránh role chéo giữa các bảng (TinhTrang của đơn
+# không bị import_status lấy, TenGoi của khách không bị role khác lấy).
+TABLE_ENTITY_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("chi tiet don", "chi tiet ban", "chi tiet hoa don"), ("lines",)),
+    (("chi tiet nhap",), ("imports", "lots")),
+    (("don hang", "hoa don", "hoadon"), ("orders",)),
+    (("ban hang", "so ban", "phieu ban"), ("lines", "orders")),
+    (("khach",), ("customers",)),
+    (("san pham", "hang hoa", "danh muc"), ("products",)),
+    (("the kho", "ton kho", "ton cuoi"), ("inventory",)),
+    (("thanh toan", "phieu thu", "thu tien"), ("payments",)),
+    (("phieu nhap", "nhap hang", "so nhap"), ("imports",)),
+    (("lo hang",), ("lots",)),
+    (("tra hang",), ("returns",)),
+    (("don vi", "quy doi"), ("units",)),
+    (("lich su gia", "bang gia"), ("price_history",)),
+    (("giao hang", "van chuyen", "delivery"), ("deliveries",)),
+)
+
+
+def _table_hint_entities(name: str) -> set[str]:
+    n = nd(str(name)).replace("_", " ")
+    for keys, entities in TABLE_ENTITY_HINTS:
+        if any(k in n for k in keys):
+            return set(entities)
+    return set()
+
+
 TABLE_PREFERENCE: dict[str, tuple[str, ...]] = {
     "lines": ("ban hang", "chi tiet don", "chitiet", "don hang", "hoa don chi tiet",
               "so ban hang", "phieu ban"),
@@ -185,6 +213,11 @@ def _role_scores(table: Any, readme_cols: dict[str, str]) -> dict[str, dict[str,
     return scores
 
 
+# Cột bắt đầu bằng các token này là mã/khoá, không phải tên hiển thị.
+_CODE_PREFIXES = {"ma", "id", "code", "so", "sku", "barcode"}
+_NAME_ROLES = {"customer_name", "product_name", "employee", "supplier"}
+
+
 def _assign(scores: dict[str, dict[str, Any]], role_names: tuple[str, ...],
             min_score: float = COLUMN_MIN_SCORE,
             min_name: float = NAME_MIN_SCORE) -> dict[str, tuple[str, float]]:
@@ -197,6 +230,10 @@ def _assign(scores: dict[str, dict[str, Any]], role_names: tuple[str, ...],
     for role in role_names:
         for col, (sc, nlen, ns) in scores.get(role, {}).items():
             if sc >= min_score and ns >= min_name:
+                if role in _NAME_ROLES:
+                    first = column_key(str(col)).split()[0] if str(col).strip() else ""
+                    if first in _CODE_PREFIXES:
+                        continue
                 pairs.append((sc, nlen, role, col))
     pairs.sort(key=lambda x: (-x[0], -x[1], x[2], x[3]))
     assigned: dict[str, tuple[str, float]] = {}
@@ -271,7 +308,13 @@ def map_business(tables: list[Any], readme: str, llm: Any = None) -> list[Mappin
     for t in tables:
         readme_cols = _readme_for_table(t, readme_map)
         scores = _role_scores(t, readme_cols)
-        global_assigned = _assign(scores, tuple(r.name for r in ROLE_DEFS))
+        hint = _table_hint_entities(t.name)
+        if hint:
+            hinted = {name for ent in hint for name in ENTITY_ROLES.get(ent, ())}
+            role_names = tuple(r.name for r in ROLE_DEFS if r.name in hinted)
+        else:
+            role_names = tuple(r.name for r in ROLE_DEFS)
+        global_assigned = _assign(scores, role_names)
         fits: dict[str, tuple[float, dict[str, tuple[str, float]]]] = {}
         for entity in ENTITY_REQUIRED:
             fit, assigned = _entity_fit(scores, entity, global_assigned)
