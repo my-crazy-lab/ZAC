@@ -18,18 +18,26 @@ Mô tả solution để dán form: [`SOLUTION_DESCRIPTION.md`](SOLUTION_DESCRIPT
 | Reproducibility 10 câu | ✅ hai lần giống hệt |
 | Export `.tar.gz` + md5 | ✅ |
 
-## Artifact trên server
+## Artifact (đã xoá — chỉ giữ số liệu để làm lại)
 
-```text
-/home/neurosus/zac_build/zaic2026_datamate_mh.tar.gz
-/home/neurosus/zac_build/zaic2026_datamate_mh.tar.gz.md5
-```
+Ngày 2026-11-09 đã xoá image/archive trên server vì chưa cần nộp Docker.
+Server mới: `100.109.54.207` (hostname `staging-master`).
+
+Số liệu bản cuối trước khi xoá:
 
 - Image: `zaic2026_datamate_mh:final` (team **MH**)
 - `.tar.gz`: ~11 GB
 - Uncompressed `.tar`: **13,134,734,848 bytes** (< 100 GB)
 - MD5: **b21a871e11e32d5f936065dc57d72d39**
-- Kiểm tra: `md5sum -c zaic2026_datamate_mh.tar.gz.md5` → OK
+
+Muốn làm lại: build theo `docker/Dockerfile` với model
+`models/Qwen3-14B-Q4_K_M.gguf`, rồi:
+```bash
+set -o pipefail
+docker save zaic2026_datamate_mh:final | pigz -p 8 > zaic2026_datamate_mh.tar.gz
+md5sum zaic2026_datamate_mh.tar.gz > zaic2026_datamate_mh.tar.gz.md5
+pigz -dc zaic2026_datamate_mh.tar.gz | wc -c
+```
 
 ## Chạy kiểm tra kiểu BTC
 

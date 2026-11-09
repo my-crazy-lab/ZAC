@@ -97,7 +97,7 @@ filter nhóm hàng và quy đổi đơn vị.
 
 ```bash
 cd datamate
-export DATAMATE_LLM_BASE_URL=http://192.168.1.87:5011/v1
+export DATAMATE_LLM_BASE_URL=http://100.109.54.207:5011/v1
 export DATAMATE_LLM_MODEL=Qwen3-14B-Q4_K_M.gguf
 export DATAMATE_PLANNER=1 DATAMATE_LLM_ONLY=1 DATAMATE_DECIDER=off
 
